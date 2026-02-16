@@ -1,0 +1,21 @@
+services:
+  docmost-fetcher:
+    build:
+      context: .
+    environment:
+      DOCMOST_DB_HOST: db
+      DOCMOST_DB_PORT: 5432
+      DOCMOST_DB_NAME: docmost
+      DOCMOST_DB_USER: docmost
+      DOCMOST_DB_PASSWORD: STRONG_DB_PASSWORD
+      LISTEN_PORT: 8099
+    ports:
+      - "40031:8099"
+    restart: unless-stopped
+    networks:
+      - docmost_network
+
+networks:
+  docmost_network:
+    external: true
+    name: docmost_default
