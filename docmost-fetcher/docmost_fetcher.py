@@ -26,6 +26,39 @@ def _conn():
         cursor_factory=RealDictCursor,
     )
 
+
+def get_all_spaces() -> Dict[str, Any]:
+    sql_spaces = """
+        SELECT
+            id,
+            name
+        FROM public.spaces
+        WHERE deleted_at IS NULL
+        ORDER BY created_at ASC
+    """
+
+    with _conn() as c:
+        with c.cursor() as cur:
+            cur.execute(sql_spaces)
+            rows = cur.fetchall()
+
+    if not rows:
+        return {"ok": True, "spaces": []}
+
+    spaces = []
+    for row in rows:
+        spaces.append({
+            "id": str(row["id"]),
+            "name": row["name"],
+        })
+
+    return {
+        "ok": True,
+        "spaces": spaces,
+    }
+
+
+
 def get_content(space_id: str, page_id: str) -> Dict[str, Any]:
     sql = """
         SELECT
@@ -61,12 +94,16 @@ def get_content(space_id: str, page_id: str) -> Dict[str, Any]:
         },
     }
 
+@app.get("/")
+def http_home_list_spaces():
+	return jsonify(get_all_spaces())
+
 @app.get("/get-content")
 def http_get_content():
     space_id = request.args.get("space_id", "").strip()
     page_id = request.args.get("page_id", "").strip()
     if not space_id or not page_id:
-        
+        return jsonify({"ok": True})
     return jsonify(get_content(space_id=space_id, page_id=page_id))
 
 @app.get("/health")
