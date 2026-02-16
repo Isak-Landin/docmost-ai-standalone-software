@@ -1,8 +1,8 @@
 import os
 from typing import Any, Dict
 
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg.extras import RealDictCursor
 from flask import Flask, request, jsonify
 
 DB_HOST = os.getenv("DOCMOST_DB_HOST", "db")
@@ -31,7 +31,7 @@ def get_all_spaces_pages() -> Dict[str, Any]:
     """
     with _conn() as c:
         with c.cursor() as cur:
-            cur.execute(sql_spaces)
+            cur.execute(sql)
             rows = cur.fetchall()
 
     if not rows:
@@ -40,15 +40,15 @@ def get_all_spaces_pages() -> Dict[str, Any]:
     spaces = {}
     increment = 0
     for row in rows:
-        space = {
-		    "id": str(row["id"]),
-		    "name": str(row["name"]),
+	space = {
+		"id": str(row["id"]),
+		"name": str(row["name"]),
 		}
 
-        spaces[increment] = space
-        increment += 1
+	spaces[increment] = space
+	increment += 1
 
     return {
-	    "ok": True,
-	    "spaces": spaces,
+	"ok": True,
+	"spaces": spaces,
     }
