@@ -9,8 +9,10 @@ services:
       DOCMOST_DB_USER: docmost
       DOCMOST_DB_PASSWORD: STRONG_DB_PASSWORD
       LISTEN_PORT: 8099
+      UI_LISTEN_PORT: 8090
     ports:
       - "40031:8099"
+      - "40032:8090"
     restart: unless-stopped
     networks:
       - docmost_network

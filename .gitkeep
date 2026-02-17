@@ -1,0 +1,2 @@
+# Trying to ensure keeping of env which is remove on each gir interaction
+.env
