@@ -96,7 +96,7 @@ def get_content(space_id: str, page_id: str) -> Dict[str, Any]:
 
 @app.get("/")
 def http_home_list_spaces():
-	return jsonify(get_all_spaces())
+    return jsonify(get_all_spaces())
 
 @app.get("/get-content")
 def http_get_content():
