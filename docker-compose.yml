@@ -1,23 +1,132 @@
 services:
+  # ------------------------------------------------------------
+  # Docmost DB proxy (reads Docmost DB; exposes HTTP API)
+  # ------------------------------------------------------------
   docmost-fetcher:
+    container_name: docmost-fetcher
     build:
-      context: .
-    environment:
-      DOCMOST_DB_HOST: db
-      DOCMOST_DB_PORT: 5432
-      DOCMOST_DB_NAME: docmost
-      DOCMOST_DB_USER: docmost
-      DOCMOST_DB_PASSWORD: STRONG_DB_PASSWORD
-      LISTEN_PORT: 8099
-      UI_LISTEN_PORT: 8090
-    ports:
-      - "40031:8099"
-      - "40032:8090"
+      context: ./docmost-fetcher
+      dockerfile: Dockerfile
     restart: unless-stopped
+    env_file: .env
+    environment:
+      DOCMOST_DB_HOST: ${DOCMOST_DB_HOST}
+      DOCMOST_DB_PORT: ${DOCMOST_DB_PORT}
+      DOCMOST_DB_NAME: ${DOCMOST_DB_NAME}
+      DOCMOST_DB_USER: ${DOCMOST_DB_USER}
+      DOCMOST_DB_PASSWORD: ${DOCMOST_DB_PASSWORD}
+
+      LISTEN_HOST: ${DOCMOST_FETCHER_LISTEN_HOST}
+      LISTEN_PORT: ${DOCMOST_FETCHER_LISTEN_PORT}
+    ports:
+      - "${DOCMOST_FETCHER_EXTERNAL_PORT}:${DOCMOST_FETCHER_LISTEN_PORT}"
     networks:
+      - dah_network
       - docmost_network
 
+  # ------------------------------------------------------------
+  # UI (standalone; never talks to Docmost DB)
+  # Talks to docmost-fetcher over HTTP and backend over HTTP/SSE
+  # ------------------------------------------------------------
+  ui:
+    container_name: docmost-ai-helper-ui
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      UI_LISTEN_HOST: ${UI_LISTEN_HOST}
+      UI_LISTEN_PORT: ${UI_LISTEN_PORT}
+
+      DOCMOST_FETCHER_BASE_URL: ${DOCMOST_FETCHER_BASE_URL}
+
+      BACKEND_BASE_URL: ${BACKEND_BASE_URL}
+      JOB_CREATE_PATH: ${JOB_CREATE_PATH}
+      SSE_PATH: ${SSE_PATH}
+    depends_on:
+      - docmost-fetcher
+      - backend
+    ports:
+      - "${UI_EXTERNAL_PORT}:${UI_LISTEN_PORT}"
+    networks:
+      - dah_network
+
+  # ------------------------------------------------------------
+  # Application DB (DAH only; NOT Docmost)
+  # init SQL lives at ./backend/init.sql
+  # ------------------------------------------------------------
+  postgres:
+    image: postgres:latest
+    container_name: docmost-ai-helper-postgres
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_DB: ${DAH_DB_NAME}
+      POSTGRES_USER: ${DAH_DB_USERNAME}
+      POSTGRES_PASSWORD: ${DAH_DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+    networks:
+      - dah_network
+    ports:
+      - "${DAH_DB_EXTERNAL_PORT}:5432"
+
+  # ------------------------------------------------------------
+  # Backend (application DB only; never touches Docmost DB)
+  # Talks to docmost-fetcher ONLY via dah_network HTTP
+  # ------------------------------------------------------------
+  backend:
+    container_name: docmost-ai-helper-backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Application DB (jobs/history)
+      DAH_DB_URL: ${DAH_DB_URL}
+
+      # Docmost access is HTTP-only via fetcher
+      DOCMOST_FETCHER_BASE_URL: ${DOCMOST_FETCHER_BASE_URL}
+
+      # Ollama
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
+      OLLAMA_MODEL: ${OLLAMA_MODEL}
+      OLLAMA_OPTIONS_JSON: ${OLLAMA_OPTIONS_JSON}
+
+      # Backend listen
+      BACKEND_LISTEN_HOST: ${BACKEND_LISTEN_HOST}
+      BACKEND_LISTEN_PORT: ${BACKEND_LISTEN_PORT}
+
+      # Routes
+      JOB_CREATE_PATH: ${JOB_CREATE_PATH}
+      SSE_PATH: ${SSE_PATH}
+
+      # Worker knobs
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY}
+      WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS}
+
+      # Status vocabulary / flags
+      JOB_STATUSES: ${JOB_STATUSES}
+      ENABLE_TOKEN_STREAMING: ${ENABLE_TOKEN_STREAMING}
+    depends_on:
+      - postgres
+      - docmost-fetcher
+    ports:
+      - "${BACKEND_EXTERNAL_PORT}:${BACKEND_LISTEN_PORT}"
+    networks:
+      - dah_network
+
+volumes:
+  postgres_data:
+
 networks:
+  dah_network:
+    driver: bridge
+
+  # ONLY docmost-fetcher needs this network
   docmost_network:
     external: true
     name: docmost_default
