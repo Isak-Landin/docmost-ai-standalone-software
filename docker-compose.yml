@@ -1,52 +1,23 @@
 services:
-  postgres:
-    image: postgres:latest
-    container_name: docmost-ai-helper-postgres
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      DAH_POSTGRES_DB: ${DAH_POSTGRES_DB}
-      DAH_POSTGRES_USER: ${DAH_POSTGRES_USER}
-      DAH_POSTGRES_PASSWORD: ${DAH_POSTGRES_PASSWORD}
-    volumes:
-      - postgres_data:var/lib/postgresql
-      - ./db/init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
-    networks:
-      - dah_network
-    ports:
-      - "${POSTGRES_PORT}:5432
-
-  backend:
-    container_name: docmost-ai-helper-backend
+  docmost-fetcher:
     build:
       context: .
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    env_file: .env
     environment:
-      DAH_DATABASE_URL: ${DAH_DATABASE_URL}
-      DOCMOST_DATABASE_URL: ${DOCMOST_DATABASE_URL}
-      OLLAMA_URL: ${OLLAMA_URL}
-      # OLLAMA_MODEL=${OLLAMA_MODEL}
-    depends_on:
-      - postgres
-    volumes:
-      - backend_data:/data
-      - postgres_data
-    networks:
-      - dah_network
-      - docmost_network
+      DOCMOST_DB_HOST: db
+      DOCMOST_DB_PORT: 5432
+      DOCMOST_DB_NAME: docmost
+      DOCMOST_DB_USER: docmost
+      DOCMOST_DB_PASSWORD: STRONG_DB_PASSWORD
+      LISTEN_PORT: 8099
+      UI_LISTEN_PORT: 8090
     ports:
-      - "${BACKEND_EXTERNAL_PORT}:${BACKEND_INTERNAL_PORT}"
-
-
-volumes:
-  postgres_data:
-  backend_data:
+      - "40031:8099"
+      - "40032:8090"
+    restart: unless-stopped
+    networks:
+      - docmost_network
 
 networks:
-  dah_network:
-    driver: bridge
   docmost_network:
     external: true
     name: docmost_default
