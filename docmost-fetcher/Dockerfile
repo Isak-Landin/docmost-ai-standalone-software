@@ -6,7 +6,7 @@ WORKDIR /app
 RUN pip install --no-cache-dir flask psycopg2-binary
 
 COPY docmost_fetcher.py /app/docmost_fetcher.py
-COPY ./api/* /app/
+COPY ./api/* /app/api/
 
 # docmost-fetcher is the only process in this container
 CMD ["python", "/app/docmost_fetcher.py"]
