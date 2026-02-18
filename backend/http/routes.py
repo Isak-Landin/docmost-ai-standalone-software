@@ -23,7 +23,7 @@ def register_routes(app: Flask) -> None:
     sse_path = os.getenv("SSE_PATH", "/api/sse")
     poll_ms = int(os.getenv("WORKER_POLL_INTERVAL_MS", "500"))
 
-    all_spaces_path = os.getenv("ALL_SPACES", "/api/spaces")
+    spaces_path = os.getenv("SPACES_PATH", "/api/spaces")
 
     statuses = _statuses_from_env()
     queued = "queued"
@@ -98,13 +98,19 @@ def register_routes(app: Flask) -> None:
 
         return Response(gen(), mimetype="text/event-stream")
 
-    @app.get(all_spaces_path)
-    def spaces(_space_id):
+
+    """
+    THIS BELONGS IN docmost_fetcher
+    """
+    @app.get(spaces_path)
+    def spaces():
+        payload = request.get_json(silent=True) or {}
         space_id = None
-        if _space_id:
-            space_id = _space_id
+        if payload is not {}:
+            space_id = (payload.get("space_id") or "").strip() or None
 
         spaces_query_result = repo.get_space(space_id=space_id)
+        return jsonify({"ok": True, "spaces": spaces_query_result.json()})
 
 
 
