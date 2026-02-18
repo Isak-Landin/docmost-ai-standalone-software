@@ -123,8 +123,24 @@ def spaces():
     if payload is not {}:
         space_id = (payload.get("space_id") or "").strip() or None
 
-    spaces_query_result = repo.get_space(space_id=space_id)
-    return jsonify({"ok": True, "spaces": spaces_query_result.json()})
+    sql = """
+    SELECT id, name
+    FROM public.spaces
+    WHERE deleted_at IS NULL
+    ORDER BY created_at ASC
+    """
+
+    with _conn() as c:
+        with c.cursor() as cur:
+            if space_id:
+                cur.execute(sql, {"space_id": space_id})
+            else:
+                cur.execute(sql)
+            rows = cur.fetchall()
+            if not rows:
+                return {"ok": False, "error": "not_found"}
+
+            return jsonify({"ok": True, "spaces": rows})
 
 
 """
