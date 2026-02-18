@@ -31,8 +31,6 @@ def test_query():
         cursor = conn.cursor()
         cursor.execute(sql)
         rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
         print(rows)
 
 
