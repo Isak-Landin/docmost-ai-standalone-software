@@ -40,7 +40,7 @@ def api_chat():
         }
     )
 
-@app.post("/api/spaces")
+@app.get("/api/spaces")
 def api_spaces():
     all_spaces = requests.get(docmost_fetcher_spaces_endpoint).json()
 
