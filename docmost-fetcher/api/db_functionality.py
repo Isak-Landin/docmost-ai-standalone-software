@@ -18,8 +18,8 @@ def _conn():
         cursor_factory=RealDictCursor
     )
 
-def get_spaces(id=None):
-    space_id = id
+def get_spaces(space_id=None):
+    _space_id = space_id
     sql = """
     SELECT id, name
     FROM public.spaces
@@ -27,21 +27,18 @@ def get_spaces(id=None):
     ORDER BY created_at ASC
     """
 
-    if space_id:
+    if _space_id:
         sql = f"""
         SELECT id, name
         FROM public.spaces
-        WHERE id = {space_id}
+        WHERE id = {_space_id}
         WHERE deleted_at IS NULL
         ORDER BY created_at ASC
         """
     contents = {}
     with _conn() as c:
         with c.cursor() as cur:
-            if space_id:
-                cur.execute(sql, {"space_id": space_id})
-            else:
-                cur.execute(sql)
+            cur.execute(sql)
             rows: RealDictRow = cur.fetchall()
             if rows.__len__() == 0:
                 return {}
