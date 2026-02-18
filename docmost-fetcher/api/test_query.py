@@ -1,21 +1,20 @@
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from flask import jsonify
 
-DB_HOST = os.getenv("DOCMOST_DB_HOST", "db")
-DB_PORT = int(os.getenv("DOCMOST_DB_PORT", "5432"))
-DB_NAME = os.getenv("DOCMOST_DB_NAME", "docmost")
-DB_USER = os.getenv("DOCMOST_DB_USER", "docmost")
-DB_PASS = os.getenv("DOCMOST_DB_PASSWORD", "STRONG_DB_PASSWORD")
+DB_URL="postgresql://docmost:STRONG_DB_PASSWORD@64.112.126.69:54327/docmost"
+DB_HOST="db"
+DB_PORT="54327"
+DB_NAME="docmost"
+DB_USER="docmost"
+DB_PASS=""
+
 
 def _conn():
     return psycopg2.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASS,
-        cursor_factory=RealDictCursor,
+        DB_URL,
+        cursor_factory=RealDictCursor
     )
 
 def test_query():
@@ -32,7 +31,9 @@ def test_query():
         cursor.execute(sql)
         rows = cursor.fetchall()
         print(rows)
-
+        for row in rows:
+            print(row["id"])
+            print(row["name"])
 
 if __name__ == '__main__':
     test_query()
