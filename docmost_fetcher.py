@@ -11,8 +11,8 @@ DB_NAME = os.getenv("DOCMOST_DB_NAME", "docmost")
 DB_USER = os.getenv("DOCMOST_DB_USER", "docmost")
 DB_PASS = os.getenv("DOCMOST_DB_PASSWORD", "STRONG_DB_PASSWORD")
 
-LISTEN_HOST = os.getenv("UI_LISTEN_HOST", "0.0.0.0")
-LISTEN_PORT = int(os.getenv("UI_LISTEN_PORT", "8099"))
+LISTEN_HOST = os.getenv("LISTEN_HOST", "0.0.0.0")
+LISTEN_PORT = int(os.getenv("LISTEN_PORT", "8099"))
 
 app = Flask(__name__)
 

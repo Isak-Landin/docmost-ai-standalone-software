@@ -156,3 +156,47 @@ def _row_to_job(r: Dict[str, Any]) -> JobRow:
         error_text=r.get("error_text"),
         created_at=r["created_at"].isoformat() if r.get("created_at") else None,
     )
+
+
+"""
+API specific fetch to allow displaying or usage of space.
+Two known use cases, one being passing no id and displaying all spaces on root page.
+Other being fetching with id to find space name
+"""
+def get_space(space_id):
+    sql = """
+        SELECT *
+        FROM spaces WHERE id = %(id)s
+        WHERE deleted_at IS NULL
+        ORDER BY created_at ASC \
+    """
+
+    if not space_id:
+        sql = """
+              SELECT id, name, slug
+              FROM public.spaces
+              WHERE deleted_at IS NULL
+              ORDER BY created_at ASC, id ASC \
+        """
+
+
+    with get_conn as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            if space_id:
+                r = cur.fetchone()
+                if not r:
+                    return None
+
+            if not space_id:
+                rs = cur.fetchall() or []
+                if not rs or rs == []:
+                    return []
+
+                spaces = [
+                    {"id": str(r["id"]), "name": r.get("name") or "", "slug": r.get("slug") or ""}
+                    for r in rs
+                ]
+                return spaces
+            return []
+

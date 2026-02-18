@@ -23,6 +23,8 @@ def register_routes(app: Flask) -> None:
     sse_path = os.getenv("SSE_PATH", "/api/sse")
     poll_ms = int(os.getenv("WORKER_POLL_INTERVAL_MS", "500"))
 
+    all_spaces = "/spaces/all"
+
     statuses = _statuses_from_env()
     queued = "queued"
     done = "done"
@@ -95,3 +97,7 @@ def register_routes(app: Flask) -> None:
                 time.sleep(max(0.05, poll_ms / 1000.0))
 
         return Response(gen(), mimetype="text/event-stream")
+
+    @app.get(all_spaces)
+    def spaces():
+
