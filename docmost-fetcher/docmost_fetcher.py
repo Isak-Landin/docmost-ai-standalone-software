@@ -5,12 +5,6 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from flask import Flask, request, jsonify
 
-DB_HOST = os.getenv("DOCMOST_DB_HOST", "db")
-DB_PORT = int(os.getenv("DOCMOST_DB_PORT", "5432"))
-DB_NAME = os.getenv("DOCMOST_DB_NAME", "docmost")
-DB_USER = os.getenv("DOCMOST_DB_USER", "docmost")
-DB_PASS = os.getenv("DOCMOST_DB_PASSWORD", "STRONG_DB_PASSWORD")
-
 LISTEN_HOST = os.getenv("UI_LISTEN_HOST", "0.0.0.0")
 LISTEN_PORT = int(os.getenv("UI_LISTEN_PORT", "8099"))
 
@@ -18,15 +12,7 @@ spaces_path = os.getenv("SPACES_PATH", "/api/spaces")
 
 app = Flask(__name__)
 
-def _conn():
-    return psycopg2.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASS,
-        cursor_factory=RealDictCursor,
-    )
+
 
 
 def get_content(space_id: str, page_id: str) -> Dict[str, Any]:
