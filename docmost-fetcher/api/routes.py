@@ -1,8 +1,8 @@
 import os
 
-from flask import Blueprint, request
+from flask import Blueprint, request, jsonify
 import requests
-from db_functionality import
+from db_functionality import get_spaces
 
 docmost_fetcher_api_route = Blueprint("docmost_fetcher_api_route", __name__)
 
@@ -22,6 +22,9 @@ def spaces():
     if payload:
         space_id = payload.get("space_id") or None
 
+    _spaces = get_spaces(space_id)
 
+    if not _spaces:
+        return jsonify({"message": "No spaces found"}), 404
 
-    return jsonify({"ok": True, "spaces": rows})
+    return jsonify({"ok": True, "spaces": spaces})

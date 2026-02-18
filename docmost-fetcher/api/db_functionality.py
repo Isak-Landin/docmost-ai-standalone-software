@@ -2,7 +2,7 @@ import os
 import psycopg2
 
 from typing import Any, Dict
-
+from psycopg2.extras import RealDictCursor
 
 
 DB_HOST = os.getenv("DOCMOST_DB_HOST", "db")
@@ -21,7 +21,7 @@ def _conn():
         cursor_factory=RealDictCursor,
     )
 
-def get_spaces(id=None)
+def get_spaces(id=None):
     space_id = id
     sql = """
     SELECT id, name
@@ -46,5 +46,7 @@ def get_spaces(id=None)
             else:
                 cur.execute(sql)
             rows = cur.fetchall()
-            if not rows:
-                return {"ok": False, "error": "not_found"}
+            if not rows or rows == []:
+                return None
+            else:
+                return rows
