@@ -6,7 +6,7 @@ services:
     container_name: docmost-fetcher
     build:
       context: ./docmost-fetcher
-      dockerfile: ./docmost-fetcher/Dockerfile
+      dockerfile: Dockerfile
     restart: unless-stopped
     env_file: .env
     environment:
@@ -32,7 +32,7 @@ services:
     container_name: docmost-ai-helper-ui
     build:
       context: ./ui
-      dockerfile: ./ui/Dockerfile
+      dockerfile: Dockerfile
     restart: unless-stopped
     env_file: .env
     environment:
@@ -81,7 +81,7 @@ services:
     container_name: docmost-ai-helper-backend
     build:
       context: ./backend
-      dockerfile: ./backend/Dockerfile
+      dockerfile: Dockerfile
     restart: unless-stopped
     env_file: .env
     environment:
