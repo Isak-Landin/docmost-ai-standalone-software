@@ -6,6 +6,5 @@ RUN pip install --no-cache-dir flask psycopg2-binary requests
 
 COPY backend /app/backend
 
-ENV PYTHONUNBUFFERED=1
-
-CMD ["bash", "-lc", "python -m backend.worker.run_worker & python -m backend.app & wait -n"]
+# Run the backend HTTP server. Worker can be separate later if you split it.
+CMD ["python", "-m", "backend.app"]
