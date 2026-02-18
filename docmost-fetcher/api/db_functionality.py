@@ -1,8 +1,9 @@
 import os
 import psycopg2
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 from psycopg2.extras import RealDictCursor
+from uuid import UUID
 
 
 DB_HOST = os.getenv("DOCMOST_DB_HOST", "db")
@@ -50,3 +51,29 @@ def get_spaces(id=None):
                 return None
             else:
                 return rows
+
+def get_pages_in_space(space_id):
+    sql = f"""
+    SELECT id, title, 
+    """
+
+def get_pages_content(space_ids: List[UUID]):
+    _space_ids = space_ids
+    for _id in _space_ids:
+
+        sql = f"""
+        SELECT id, text_content
+        FROM public.pages
+        WHERE id = {_id}
+        WHERE deleted_at IS NULL
+        """
+        contents = []
+        with _conn() as c:
+            with c.cursor() as cur:
+                r = cur.execute(sql)
+
+                if r.rowcount == 0:
+                    contents.append()
+
+                row = r.fetchone()
+
