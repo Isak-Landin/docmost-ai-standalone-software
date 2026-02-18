@@ -14,6 +14,8 @@ DB_PASS = os.getenv("DOCMOST_DB_PASSWORD", "STRONG_DB_PASSWORD")
 LISTEN_HOST = os.getenv("UI_LISTEN_HOST", "0.0.0.0")
 LISTEN_PORT = int(os.getenv("UI_LISTEN_PORT", "8099"))
 
+spaces_path = os.getenv("SPACES_PATH", "/api/spaces")
+
 app = Flask(__name__)
 
 def _conn():
@@ -109,6 +111,73 @@ def http_get_content():
 @app.get("/health")
 def health():
     return jsonify({"ok": True})
+
+"""
+THIS BELONGS IN docmost_fetcher
+"""
+
+@app.get(spaces_path)
+def spaces():
+    payload = request.get_json(silent=True) or {}
+    space_id = None
+    if payload is not {}:
+        space_id = (payload.get("space_id") or "").strip() or None
+
+    spaces_query_result = repo.get_space(space_id=space_id)
+    return jsonify({"ok": True, "spaces": spaces_query_result.json()})
+
+
+"""
+@app.get("/api/spaces")
+def spaces():
+    spaces_response = request.get(SPACES_ALL_ENDPOINT)
+
+    reponse = {
+        "ok": True,
+        "spaces": spaces_response.json() if spaces_response.status_code == 200 else [],
+    }
+    return jsonify(reponse)
+
+
+@app.get("/api/spaces/<space_id>/pages")
+def api_space_pages(space_id: str):
+    sql = '''
+        SELECT
+            id,
+            space_id,
+            slug_id,
+            title,
+            parent_page_id,
+            updated_at
+        FROM public.pages
+        WHERE space_id = %(space_id)s
+          AND deleted_at IS NULL
+        ORDER BY parent_page_id NULLS FIRST,
+                 title ASC NULLS LAST,
+                 id ASC
+    '''
+    with _conn() as c:
+        with c.cursor() as cur:
+            cur.execute(sql, {"space_id": space_id})
+            rows = cur.fetchall() or []
+
+    pages = []
+    for r in rows:
+        pages.append(
+            {
+                "id": str(r["id"]),
+                "space_id": str(r["space_id"]),
+                "slug_id": r.get("slug_id") or "",
+                "title": r.get("title") or "",
+                "parent_page_id": str(r["parent_page_id"])
+                if r.get("parent_page_id")
+                else None,
+                "updated_at": r["updated_at"].isoformat() if r.get("updated_at") else None,
+            }
+        )
+
+    return jsonify({"ok": True, "pages": pages})
+"""
 
 if __name__ == "__main__":
     app.run(host=LISTEN_HOST, port=LISTEN_PORT)
