@@ -1,6 +1,6 @@
 import os
 import psycopg2
-from psycopg2 import RealDictCursor
+from psycopg2.extras import RealDictCursor
 
 DB_HOST = os.getenv("DOCMOST_DB_HOST", "db")
 DB_PORT = int(os.getenv("DOCMOST_DB_PORT", "5432"))
