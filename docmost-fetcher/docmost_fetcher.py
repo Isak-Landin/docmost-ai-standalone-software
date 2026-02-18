@@ -29,38 +29,6 @@ def _conn():
     )
 
 
-def get_all_spaces() -> Dict[str, Any]:
-    sql_spaces = """
-        SELECT
-            id,
-            name
-        FROM public.spaces
-        WHERE deleted_at IS NULL
-        ORDER BY created_at ASC
-    """
-
-    with _conn() as c:
-        with c.cursor() as cur:
-            cur.execute(sql_spaces)
-            rows = cur.fetchall()
-
-    if not rows:
-        return {"ok": True, "spaces": []}
-
-    spaces = []
-    for row in rows:
-        spaces.append({
-            "id": str(row["id"]),
-            "name": row["name"],
-        })
-
-    return {
-        "ok": True,
-        "spaces": spaces,
-    }
-
-
-
 def get_content(space_id: str, page_id: str) -> Dict[str, Any]:
     sql = """
         SELECT
@@ -96,9 +64,11 @@ def get_content(space_id: str, page_id: str) -> Dict[str, Any]:
         },
     }
 
+
+
 @app.get("/")
 def http_home_list_spaces():
-    return jsonify(get_all_spaces())
+    return jsonify(spaces())
 
 @app.get("/get-content")
 def http_get_content():
@@ -108,40 +78,39 @@ def http_get_content():
         return jsonify({"ok": True})
     return jsonify(get_content(space_id=space_id, page_id=page_id))
 
-@app.get("/health")
-def health():
-    return jsonify({"ok": True})
-
-"""
-THIS BELONGS IN docmost_fetcher
-"""
-
-@app.get(spaces_path)
-def spaces():
-    payload = request.get_json(silent=True) or {}
-    space_id = None
-    if payload is not {}:
-        space_id = (payload.get("space_id") or "").strip() or None
-
-    sql = """
-    SELECT id, name
-    FROM public.spaces
-    WHERE deleted_at IS NULL
-    ORDER BY created_at ASC
-    """
+"""def get_all_spaces() -> Dict[str, Any]:
+    sql_spaces = '''
+        SELECT
+            id,
+            name
+        FROM public.spaces
+        WHERE deleted_at IS NULL
+        ORDER BY created_at ASC
+    '''
 
     with _conn() as c:
         with c.cursor() as cur:
-            if space_id:
-                cur.execute(sql, {"space_id": space_id})
-            else:
-                cur.execute(sql)
+            cur.execute(sql_spaces)
             rows = cur.fetchall()
-            if not rows:
-                return {"ok": False, "error": "not_found"}
 
-            return jsonify({"ok": True, "spaces": rows})
+    if not rows:
+        return {"ok": True, "spaces": []}
 
+    spaces = []
+    for row in rows:
+        spaces.append({
+            "id": str(row["id"]),
+            "name": row["name"],
+        })
+
+    return {
+        "ok": True,
+        "spaces": spaces,
+    }"""
+
+@app.get("/health")
+def health():
+    return jsonify({"ok": True})
 
 """
 @app.get("/api/spaces")
