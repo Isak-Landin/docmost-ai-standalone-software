@@ -2,10 +2,10 @@ import os
 import psycopg2
 
 from typing import Any, Dict, List
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, RealDictRow
 from uuid import UUID
 
-
+DB_URL = os.environ.get("DB_URL", "")
 DB_HOST = os.getenv("DOCMOST_DB_HOST", "db")
 DB_PORT = int(os.getenv("DOCMOST_DB_PORT", "5432"))
 DB_NAME = os.getenv("DOCMOST_DB_NAME", "docmost")
@@ -14,12 +14,8 @@ DB_PASS = os.getenv("DOCMOST_DB_PASSWORD", "STRONG_DB_PASSWORD")
 
 def _conn():
     return psycopg2.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASS,
-        cursor_factory=RealDictCursor,
+        DB_URL,
+        cursor_factory=RealDictCursor
     )
 
 def get_spaces(id=None):
@@ -39,26 +35,51 @@ def get_spaces(id=None):
         WHERE deleted_at IS NULL
         ORDER BY created_at ASC
         """
-
+    contents = {}
     with _conn() as c:
         with c.cursor() as cur:
             if space_id:
                 cur.execute(sql, {"space_id": space_id})
             else:
                 cur.execute(sql)
-            rows = cur.fetchall()
-            if not rows or rows == []:
-                return None
+            rows: RealDictRow = cur.fetchall()
+            if rows.__len__() == 0:
+                return {}
+            if not rows or rows:
+                return {}
             else:
-                return rows
+                for row in rows:
+                    contents[row["id"]] = row["name"]
+
+                return contents
 
 def get_pages_in_space(space_id):
     sql = f"""
-    SELECT id, title, 
+    SELECT id, title, space_id
+    FROM public.pages
+    WHERE deleted_at IS NULL
+    AND space_id = {space_id}
     """
+    contents = {
+        f"{space_id}": {}
+    }
+    with _conn() as c:
+        with c.cursor() as cur:
+            cur.execute(sql, {"space_id": space_id})
+            rows: RealDictRow = cur.fetchall()
+            if rows.__len__() == 0:
+                return {}
+            if not rows or rows:
+                return {}
+            else:
+                for row in rows:
+                    contents[f"{space_id}"][row["id"]] = row["title"]
+
+    return contents
 
 def get_pages_content(space_ids: List[UUID]):
     _space_ids = space_ids
+    contents = {}
     for _id in _space_ids:
 
         sql = f"""
@@ -67,13 +88,16 @@ def get_pages_content(space_ids: List[UUID]):
         WHERE id = {_id}
         WHERE deleted_at IS NULL
         """
-        contents = []
         with _conn() as c:
             with c.cursor() as cur:
                 r = cur.execute(sql)
-
-                if r.rowcount == 0:
-                    contents.append()
-
                 row = r.fetchone()
+                if not row:
+                    continue
+                if not row["id"] or not row["text_content"]:
+                    continue
+                if row["id"] and row["text_content"]:
+                    contents[row["id"]] = row["text_content"]
+
+    return contents
 
