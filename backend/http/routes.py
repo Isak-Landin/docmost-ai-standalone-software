@@ -23,7 +23,7 @@ def register_routes(app: Flask) -> None:
     sse_path = os.getenv("SSE_PATH", "/api/sse")
     poll_ms = int(os.getenv("WORKER_POLL_INTERVAL_MS", "500"))
 
-    all_spaces = "/spaces/all"
+    all_spaces_path = os.getenv("ALL_SPACES", "/api/spaces")
 
     statuses = _statuses_from_env()
     queued = "queued"
@@ -98,6 +98,66 @@ def register_routes(app: Flask) -> None:
 
         return Response(gen(), mimetype="text/event-stream")
 
-    @app.get(all_spaces)
-    def spaces():
+    @app.get(all_spaces_path)
+    def spaces(_space_id):
+        space_id = None
+        if _space_id:
+            space_id = _space_id
 
+        spaces_query_result = repo.get_space(space_id=space_id)
+
+
+
+
+
+"""
+@app.get("/api/spaces")
+def spaces():
+    spaces_response = request.get(SPACES_ALL_ENDPOINT)
+    
+    reponse = {
+        "ok": True,
+        "spaces": spaces_response.json() if spaces_response.status_code == 200 else [],
+    }
+    return jsonify(reponse)
+
+
+@app.get("/api/spaces/<space_id>/pages")
+def api_space_pages(space_id: str):
+    sql = '''
+        SELECT
+            id,
+            space_id,
+            slug_id,
+            title,
+            parent_page_id,
+            updated_at
+        FROM public.pages
+        WHERE space_id = %(space_id)s
+          AND deleted_at IS NULL
+        ORDER BY parent_page_id NULLS FIRST,
+                 title ASC NULLS LAST,
+                 id ASC
+    '''
+    with _conn() as c:
+        with c.cursor() as cur:
+            cur.execute(sql, {"space_id": space_id})
+            rows = cur.fetchall() or []
+
+    pages = []
+    for r in rows:
+        pages.append(
+            {
+                "id": str(r["id"]),
+                "space_id": str(r["space_id"]),
+                "slug_id": r.get("slug_id") or "",
+                "title": r.get("title") or "",
+                "parent_page_id": str(r["parent_page_id"])
+                if r.get("parent_page_id")
+                else None,
+                "updated_at": r["updated_at"].isoformat() if r.get("updated_at") else None,
+            }
+        )
+
+    return jsonify({"ok": True, "pages": pages})
+"""
