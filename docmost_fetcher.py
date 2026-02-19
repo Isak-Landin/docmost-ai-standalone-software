@@ -79,7 +79,20 @@ def get_content(space_id: str, page_id: str) -> Dict[str, Any]:
             row = cur.fetchone()
 
     if not row:
-        return {"ok": False, "error": "not_found"}
+        if not page_id:
+            page_id = None
+        else:
+            page_id = str(page_id)
+        if not space_id:
+            space_id = None
+        else:
+            space_id = str(space_id)
+
+        return {
+            "ok": False,
+            "error": "not_found row for page_id and space_id",
+            "message": f"page_id was - {page_id}, space_id was - {space_id}",
+        }
 
     return {
         "ok": True,

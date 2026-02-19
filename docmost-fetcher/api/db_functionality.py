@@ -1,9 +1,11 @@
 import os
 import psycopg2
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
+
 from psycopg2.extras import RealDictCursor, RealDictRow
 from uuid import UUID
+from datetime import datetime
 
 DB_URL = os.environ.get("DB_URL", "")
 DB_HOST = os.getenv("DOCMOST_DB_HOST", "db")
@@ -18,69 +20,121 @@ def _conn():
         cursor_factory=RealDictCursor
     )
 
-def get_spaces(space_id=None):
+def get_spaces(space_id: str = None):
+    """
+    This function is used to retrieve specific information about one or all spaces.
+    @space_id: type str
+    return: Dict[]
+    """
     _space_id = space_id
-    sql = """
-    SELECT id, name
-    FROM public.spaces
-    WHERE deleted_at IS NULL
-    ORDER BY created_at ASC
-    """
-
     if _space_id:
-        sql = f"""
-        SELECT id, name
-        FROM public.spaces
-        WHERE id = {_space_id}
-        WHERE deleted_at IS NULL
-        ORDER BY created_at ASC
+        sql = """
+            SELECT id, name, created_at, updated_at, visibility
+            FROM public.spaces
+            WHERE id = %s
+              AND deleted_at IS NULL
+            ORDER BY created_at ASC
         """
-    contents = {}
+        params = (_space_id,)
+    else:
+        sql = """
+            SELECT id, name, created_at, updated_at, visibility
+            FROM public.spaces
+            WHERE deleted_at IS NULL
+            ORDER BY created_at ASC
+        """
+        params = None
+
     with _conn() as c:
-        with c.cursor() as cur:
-            cur.execute(sql)
-            rows: RealDictRow = cur.fetchall()
-            if rows.__len__() == 0:
-                return {}
-            if not rows or rows:
-                return {}
+        with c.cursor(cursor_factory=RealDictCursor) as cur:
+            if params:
+                cur.execute(sql, params)
             else:
-                for row in rows:
-                    contents[row["id"]] = row["name"]
+                cur.execute(sql)
 
-                return contents
+            rows = cur.fetchall()
+            if not rows:
+                return {}
 
-def get_pages_in_space(space_id):
-    sql = f"""
-    SELECT id, title, space_id
-    FROM public.pages
-    WHERE deleted_at IS NULL
-    AND space_id = {space_id}
+            contents = {}
+
+            for row in rows:
+                contents[row["id"]] = {
+                    "name": row["name"], "created_at": row["created_at"], "updated_at": row["updated_at"], "visibility": row["visibility"]
+                }
+            return contents
+
+def get_pages_in_space(dict_space_id: Dict[Any, Any]):
     """
-    contents = {
-        f"{space_id}": {}
-    }
-    with _conn() as c:
-        with c.cursor() as cur:
-            cur.execute(sql, {"space_id": space_id})
-            rows: RealDictRow = cur.fetchall()
-            if rows.__len__() == 0:
-                return {}
-            if not rows or rows:
-                return {}
-            else:
-                for row in rows:
-                    contents[f"{space_id}"][row["id"]] = row["title"]
+    This function is used to retrieve specific information about one or all pages per space id passed.
+    @dict_space_id: type dict
+    return: Dict[_space_id, Dict[, Any]]
+    """
+    _space_id = None
+    contents = {}
+    _space_id_not_found = 1
+    for key, value in dict_space_id.items():
+        if not _space_id:
+            if not value:
+                value = None
+            contents[f"error_{_space_id_not_found}"] = {
+                "error": "No space_id provided",
+                "message": "We expected",
+                "key": _space_id,
+                "value": value
+            }
+
+            _space_id_not_found += 1
+
+        _space_id = str(key)
+        contents[_space_id] = {}
+
+        sql = f"""
+            SELECT id, title, parent_page_id, creator_id, space_id, created_at, updated_at
+            FROM public.pages
+            WHERE space_id = %s
+                AND deleted_at IS NULL
+            ORDER BY created_at ASC
+        """
+
+        params = (_space_id,)
+
+        with _conn() as c:
+            with c.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(sql, params)
+                rows = cur.fetchall()
+
+                if not rows:
+                    contents[_space_id] = None
+                else:
+                    for row in rows:
+                        contents[_space_id][row["id"]] = {
+                            "title": row["title"],
+                            "parent_page_id": row["parent_page_id"],
+                            "creator_id": row["creator_id"],
+                            "space_id": row["space_id"],
+                            "created_at": row["created_at"],
+                            "updated_at": row["updated_at"],
+                        }
 
     return contents
 
-def get_pages_content(space_ids: List[UUID]):
-    _space_ids = space_ids
+
+def get_pages_content(space_id, page_ids: List[UUID]):
+    _space_id = space_id
+    _page_ids = page_ids
     contents = {}
-    for _id in _space_ids:
+    for _id in page_ids:
 
         sql = f"""
-        SELECT id, text_content
+        SELECT
+        id,
+        space_id,
+        title,
+        text_content,
+        content,
+        updated_at,
+        deleted_at
         FROM public.pages
         WHERE id = {_id}
         WHERE deleted_at IS NULL

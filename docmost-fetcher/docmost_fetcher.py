@@ -4,6 +4,7 @@ from typing import Any, Dict
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from flask import Flask, request, jsonify
+from api.db_functionality import get_spaces, get_pages_in_space, get_pages_content
 
 LISTEN_HOST = os.getenv("UI_LISTEN_HOST", "0.0.0.0")
 LISTEN_PORT = int(os.getenv("UI_LISTEN_PORT", "8099"))
@@ -15,8 +16,9 @@ app = Flask(__name__)
 
 
 
-def get_content(space_id: str, page_id: str) -> Dict[str, Any]:
-    sql = """
+def get_contents(space_id: str) -> Dict[str, Any]:
+    _space_id = space_id
+    '''sql = """
         SELECT
             id,
             space_id,
@@ -28,14 +30,11 @@ def get_content(space_id: str, page_id: str) -> Dict[str, Any]:
         FROM public.pages
         WHERE id = %(page_id)s AND space_id = %(space_id)s
         LIMIT 1
-    """
-    with _conn() as c:
-        with c.cursor() as cur:
-            cur.execute(sql, {"page_id": page_id, "space_id": space_id})
-            row = cur.fetchone()
+    """'''
+    _pages = get_pages_in_space(_space_id)
 
-    if not row:
-        return {"ok": False, "error": "not_found"}
+    _contents_in_space_pages = get_pages_content(space_id=_space_id, page_ids=_pages)
+
 
     return {
         "ok": True,
@@ -54,7 +53,7 @@ def get_content(space_id: str, page_id: str) -> Dict[str, Any]:
 
 @app.get("/")
 def http_home_list_spaces():
-    return jsonify(spaces())
+    return jsonify(get_space())
 
 @app.get("/get-content")
 def http_get_content():
