@@ -96,20 +96,21 @@ def get_pages_in_space(dict_space_id) -> dict[str, Any]:
         }
     """
     _space_id = None
+    _error_holder = []
     contents = {}
-    _space_id_not_found = 1
     for key, value in dict_space_id.items():
         if not _space_id:
             if not value:
                 value = None
-            contents[f"error_{_space_id_not_found}"] = {
-                "error": "No space_id provided",
-                "message": "We expected",
-                "key": _space_id,
-                "value": value
-            }
-
-            _space_id_not_found += 1
+            # TODO ensure it no longer uses external error key, deprecated, use internal error inside object
+            _error_holder.append(
+                {
+                    "error": "No space_id provided",
+                    "message": "We expected",
+                    "key": _space_id,
+                    "value": value
+                }
+            )
         sql = f"""
             SELECT id, title, parent_page_id, creator_id, space_id, created_at, updated_at
             FROM public.pages
@@ -137,7 +138,9 @@ def get_pages_in_space(dict_space_id) -> dict[str, Any]:
                             "created_at": row["created_at"],
                             "updated_at": row["updated_at"],
                         }
-
+    if _error_holder:
+        for _json_object in _error_holder:
+            contents.update(_json_object)
     return contents
 
 def get_pages_content (page_ids_space: Dict = None, space_id: str = None):
@@ -188,6 +191,12 @@ def get_pages_content (page_ids_space: Dict = None, space_id: str = None):
             }
 
         _space_dict = get_spaces(_space_id)
+        if not _space_dict:
+            return {
+                "error": f"No result for _space_id",
+                "message": f"When querying for the space information, we could not find any result for {_space_id}"
+            }
+
         if "error" in _space_dict:
             try:
                 value = _space_dict["error"]
@@ -198,14 +207,21 @@ def get_pages_content (page_ids_space: Dict = None, space_id: str = None):
                 "message": "Make sure that the space_id exists",
                 "value": value
             }
-        if not _space_dict:
-            return {
-                "error": f"No result for _space_id",
-                "message": f"When querying for the space information, we could not find any result for {_space_id}"
-            }
+
         _pages_in_space = None
         try:
             _pages_in_space = get_pages_in_space(_space_dict)
+
+            if not _pages_in_space or "error" in _pages_in_space:
+                _value = None
+                if "error" in _pages_in_space:
+                    _value = _space_dict["error"]
+
+                return {
+                    "error": f"No result for get_pages_in_space({_space_id})",
+                    "message": "When running function to get pages in space from docmost db. We ran into an issue",
+                    "value": _value
+                }
         except KeyError as e:
             return {
                 "error": f"{str(e)} - {_pages_in_space}",
@@ -215,8 +231,150 @@ def get_pages_content (page_ids_space: Dict = None, space_id: str = None):
     return contents
 
 
+def check_and_return_errors_in_dict(_dict_to_verify, custom_message = None, custom_value = None, custom_error = None):
+    """
+    Takes a dict and optional custom message and value. Dict is looked in to find references to error,
+    optional message and value are used to create custom error messages if an error is found.
+
+    It is created to be compatible with deprecated versions by looking for error key as well as error value.
+    New versions should always contain error in value and NOT key.
+
+    IT will allow error value to remain for non-deprecated dicts passed;
+    where value for error is a stringified exception as e.
+
+    TODO Ensure compatibility if passed dict contains multiple "error" keys, or values.
+
+    @_dict_to_verify Dict
+    @custom_message String
+    @custom_value String
+    @custom_error_message String
+
+    @return Dict[str, str]
+    """
+
+    """
+    Inspect targets of interest
+    @frame
+    - @f_back       - next outer frame object (this frame’s caller)
+    - @f_code       - code object being executed in this frame
+    - @f_lineno     - current line number in Python source code
+    
+    traceback
+    - @tb_frame     - frame object at this level
+    - @tb_lineno    - current line number in Python source code
+    """
+
+    def create_message(_dict_to_inspect):
+        """
+        Two base cases exist.
+        One where a dict is passed with deprecated structure, using "error" as key for json object.
+        Second where a dict is passed with expected structure, error as part of the values with corresponding field.
+
+        Expected structure:
+        @_dict_to_inspect Dict - is passed by caller and to be inspected
+        """
+        _error_message = ""
+        if "error" in key:
+
+            try:
+                _error_message = _dict_to_inspect["message"]
+            except KeyError:
+                if not custom_message:
+                    _error_message = ""
+                else:
+                    _error_message = custom_message
+            return _error_message
+
+        if "error" in _dict_to_inspect:
+            return None
+        else:
+            return None
+
+    def create_value(_dict_to_inspect):
+        """
+        Two base cases exist.
+        One where a dict is passed with deprecated structure, using "error" as key for json object.
+        Second where a dict is passed with expected structure, error as part of the values with corresponding field.
+
+        Expected structure:
+        @_dict_to_inspect Dict - is passed by caller and to be inspected
+        """
+        _error_value = ""
+        if "error" not in _dict_to_inspect:
+            try:
+                _error_value = _dict_to_inspect["value"]
+            except KeyError:
+                if not custom_value:
+                    _error_value = ""
+                else:
+                    _error_value = custom_value
+            return _error_value
+        if "error" in _dict_to_inspect:
+            return None
+        else:
+            return None
+
+    def create_error(_dict_to_inspect):
+        """
+        Two base cases exist.
+        One where a dict is passed with deprecated structure, using "error" as key for json object.
+        Second where a dict is passed with expected structure, error as part of the values with corresponding field.
+
+        Expected structure:
+        @_dict_to_inspect Dict - is passed by caller and to be inspected
+        """
+        _error_error = ""
+
+        if "error" not in _dict_to_inspect:
+            try:
+                _error_error = _dict_to_inspect["error"]
+            except KeyError:
+                if not custom_error:
+                    _error_error = ""
+                else:
+                    _error_error = custom_error
+            return _error_error
+        if "error" in _dict_to_inspect:
+            return None
+        else:
+            return None
+
+    _error_key_occurrences = 0
+    _error_value_occurrences = 0
+    for key, value in _dict_to_verify.items():
+        if key == "error":
+            _error_key_occurrences += 1
+        if value == "error":
+            _error_value_occurrences += 1
+
+    _error_dict = {}
+    for key, value in _dict_to_verify.items():
+        if "error" in key or "error" in value:
+            _error_dict = _dict_to_verify["error"]
+            _error_dict["message"] = create_message(_error_dict)
+            _error_dict["value"] = create_value(_error_dict)
+            _error_dict["error"] = create_error(_error_dict)
 
 
+
+    return _error_dict
+
+def build_errors_dict(custom_error: str, custom_message: str = None, custom_value: str = None):
+    _error = None
+    _message = None
+    _value = None
+
+    _error_dict = {}
+
+    if custom_error:
+        _error_dict["error"] = custom_error
+    if custom_message:
+        _error_dict["message"] = custom_message
+    if custom_value:
+        _error_dict["value"] = custom_value
+
+
+    return _error_dict
 
 
 
