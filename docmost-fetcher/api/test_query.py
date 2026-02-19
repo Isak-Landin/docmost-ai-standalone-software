@@ -347,13 +347,44 @@ def check_and_return_errors_in_dict(_dict_to_verify, custom_message = None, cust
         if value == "error":
             _error_value_occurrences += 1
 
+    _error_key_dicts_as_list = []
+    _error_value_dicts = {}
+    for _ in range(_error_key_occurrences):
+        try:
+            _error_key_dicts_as_list.append(_dict_to_verify.pop("error"))
+        except KeyError:
+            print("No more keys corresponding to error were found")
+            print(_dict_to_verify)
+
+    for _ in range(_error_value_occurrences):
+        try:
+            for key, value in _dict_to_verify.items():
+                if "error" in value:
+                    _error_value_dicts[key] = [_dict_to_verify.pop(key)]
+        except KeyError:
+            print("No more values corresponding to error were found")
+            print(_dict_to_verify)
+
+    for item in _error_key_dicts_as_list:
+        _error_dict = item
+        _error_dict_key = "error"
+        _error_dict["message"] = create_message(_error_dict)
+        _error_dict["value"] = create_value(_error_dict)
+        _error_dict["error"] = create_error(_error_dict)
+
+    for key, value in _error_value_dicts:
+        _error_dict = {f"{key}": value}
+        _error_dict_key = key
+        _error_dict["message"] = create_message(_error_dict_key)
+        _error_dict["value"] = create_value(_error_dict)
+        _error_dict["error"] = create_error(_error_dict)
+
     _error_dict = {}
     for key, value in _dict_to_verify.items():
+        if "error" in key:
+            pass
         if "error" in key or "error" in value:
-            _error_dict = _dict_to_verify["error"]
-            _error_dict["message"] = create_message(_error_dict)
-            _error_dict["value"] = create_value(_error_dict)
-            _error_dict["error"] = create_error(_error_dict)
+            pass
 
 
 
