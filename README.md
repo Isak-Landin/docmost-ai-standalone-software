@@ -1,197 +1,171 @@
-# ============================================================
 # DOCMOST AI EXTENSION
-# ============================================================
-#
-# An environment-driven AI assistant extension for Docmost.
-# Designed for deterministic backend execution, strict DB separation,
-# and self-hosted LLM integration (no SaaS dependency required).
-#
-# ============================================================
-# PLACEHOLDERS (EDIT IN ONE PLACE BEFORE DISTRIBUTION)
-# ============================================================
-#
-# <REPO_URL>
-# <PROJECT_DIRECTORY>
-#
-# <DOCMOST_FETCHER_PORT>
-# <AI_BACKEND_PORT>
-# <POSTGRES_DOCMOST_PORT>
-# <POSTGRES_AI_PORT>
-# <REDIS_PORT>
-#
-# <DOCMOST_DB_HOST>
-# <DOCMOST_DB_PORT>
-# <DOCMOST_DB_NAME>
-# <DOCMOST_DB_USER>
-# <DOCMOST_DB_PASSWORD>
-#
-# <AI_DB_HOST>
-# <AI_DB_PORT>
-# <AI_DB_NAME>
-# <AI_DB_USER>
-# <AI_DB_PASSWORD>
-#
-# <OLLAMA_HOST>
-# <OLLAMA_PORT>
-#
-# ============================================================
-# OVERVIEW
-# ============================================================
-#
-# Docmost AI Extension is a self-hosted backend system that integrates
-# AI-assisted content analysis and transformation into Docmost.
-#
-# The extension allows users to:
-#
-# - Select one or multiple Docmost pages
-# - Provide a message or instruction
-# - Send both to a backend worker
-# - Have the worker fetch page content directly from the Docmost database
-# - Construct a structured prompt
-# - Call a locally hosted LLM (e.g. Ollama)
-# - Store the result in a dedicated AI database
-# - Stream job status and final output back to the UI
-#
-# This project is intentionally:
-#
-# - Environment-driven (no hardcoded runtime values)
-# - Deterministic in workflow
-# - Strictly separated between read and write databases
-# - Designed for Docker-based self-hosting
-#
-# ============================================================
-# ARCHITECTURE
-# ============================================================
-#
-# The system consists of multiple services:
-#
-# 1. Docmost Fetcher
-#    - Read-only proxy service
-#    - Connects to Docmost PostgreSQL database
-#    - Fetches spaces, pages, and page content
-#
-# 2. AI Backend
-#    - Orchestrates AI job creation and execution
-#    - Stores job metadata and results
-#    - Communicates with LLM runtime
-#
-# 3. LLM Runtime (e.g. Ollama)
-#    - Executes model inference
-#    - Self-hosted
-#
-# 4. AI Database
-#    - Stores AI job requests
-#    - Stores AI results
-#    - Completely separate from Docmost DB
-#
-# 5. (Optional) Redis
-#    - Used for background workers / job queues (if enabled)
-#
-# ============================================================
-# WORKFLOW
-# ============================================================
-#
-# 1. UI sends:
-#       - space_id
-#       - selected_page_ids[]
-#       - user message
-#
-# 2. AI Backend:
-#       - Creates job entry
-#       - Calls Docmost Fetcher
-#       - Retrieves page content
-#
-# 3. Worker:
-#       - Builds prompt
-#       - Calls LLM runtime
-#       - Receives model response
-#
-# 4. Result:
-#       - Stored in AI database
-#       - UI receives updates via SSE
-#
-# ============================================================
-# DESIGN PRINCIPLES
-# ============================================================
-#
-# - No hardcoded configuration
-# - All values from environment variables
-# - Strict DB separation (Docmost = read-only)
-# - Explicit UUID handling
-# - Deterministic execution path
-# - Clear error propagation
-#
-# ============================================================
-# INSTALLATION
-# ============================================================
-#
-# Clone repository:
-#
-#     git clone <REPO_URL>
-#     cd <PROJECT_DIRECTORY>
-#
-# Configure environment:
-#
-#     cp .env.example .env
-#     # edit placeholders
-#
-# Start services:
-#
-#     docker compose up --build -d
-#
-# ============================================================
-# EXPOSED PORTS
-# ============================================================
-#
-# Docmost Fetcher:        <DOCMOST_FETCHER_PORT>
-# AI Backend API:         <AI_BACKEND_PORT>
-# Docmost PostgreSQL:     <POSTGRES_DOCMOST_PORT>
-# AI PostgreSQL:          <POSTGRES_AI_PORT>
-# Redis (optional):       <REDIS_PORT>
-# Ollama Runtime:         <OLLAMA_PORT>
-#
-# ============================================================
-# ENVIRONMENT VARIABLES (SUMMARY)
-# ============================================================
-#
-# DOCMOST_DB_HOST=<DOCMOST_DB_HOST>
-# DOCMOST_DB_PORT=<DOCMOST_DB_PORT>
-# DOCMOST_DB_NAME=<DOCMOST_DB_NAME>
-# DOCMOST_DB_USER=<DOCMOST_DB_USER>
-# DOCMOST_DB_PASSWORD=<DOCMOST_DB_PASSWORD>
-#
-# AI_DB_HOST=<AI_DB_HOST>
-# AI_DB_PORT=<AI_DB_PORT>
-# AI_DB_NAME=<AI_DB_NAME>
-# AI_DB_USER=<AI_DB_USER>
-# AI_DB_PASSWORD=<AI_DB_PASSWORD>
-#
-# OLLAMA_HOST=<OLLAMA_HOST>
-# OLLAMA_PORT=<OLLAMA_PORT>
-#
-# ============================================================
-# SECURITY MODEL
-# ============================================================
-#
-# - Docmost DB is never written to.
-# - AI DB is isolated from Docmost.
-# - LLM runtime is internal network only.
-# - All external access controlled via Docker networking.
-#
-# ============================================================
-# FUTURE EXTENSIONS
-# ============================================================
-#
-# - Streaming partial token responses
-# - Page-level diff generation
-# - AI-assisted content rewriting
-# - Semantic search via embeddings
-# - Background job queue scaling
-#
-# ============================================================
-# LICENSE
-# ============================================================
-#
-# (Specify your license here)
-#
+___
+Docmost AI Extension is a self-hosted AI integration layer for Docmost.
+It enables structured, environment-driven AI interaction with selected
+Docmost pages without modifying the Docmost core system.
+
+The system is designed for deterministic backend orchestration,
+strict database separation, and full Docker-based deployment.
+___
+## PLACEHOLDERS (EDIT THESE BEFORE DISTRIBUTION)
+
+```
+REPOSITORY
+<REPO_URL>
+<PROJECT_DIRECTORY>
+
+CONTAINER PORTS
+<DOCMOST_FETCHER_PORT>
+<AI_BACKEND_PORT>
+<POSTGRES_DOCMOST_PORT>
+<POSTGRES_AI_PORT>
+<REDIS_PORT>
+<OLLAMA_PORT>
+
+DOCMOST DATABASE
+<DOCMOST_DB_HOST>
+<DOCMOST_DB_PORT>
+<DOCMOST_DB_NAME>
+<DOCMOST_DB_USER>
+<DOCMOST_DB_PASSWORD>
+
+AI DATABASE
+<AI_DB_HOST>
+<AI_DB_PORT>
+<AI_DB_NAME>
+<AI_DB_USER>
+<AI_DB_PASSWORD>
+
+LLM RUNTIME
+<OLLAMA_HOST>
+<OLLAMA_PORT>
+```
+___
+## PROJECT OVERVIEW
+
+
+The extension allows a user to:
+
+- Select one or multiple Docmost pages
+- Provide an instruction or message
+- Send both to a backend job system
+- Fetch page content directly from the Docmost database
+- Construct a structured prompt
+- Call a locally hosted LLM (for example via Ollama)
+- Store AI results in a dedicated AI database
+- Stream job status and final output back to the UI
+
+The project avoids SaaS dependencies and is intended for
+self-hosted deployments.
+___
+## ARCHITECTURE
+
+***The system consists of separate services***:
+
+1. Docmost Fetcher
+   - Read-only proxy
+   - Connects to Docmost PostgreSQL
+   - Fetches spaces, pages and page content
+
+2. AI Backend
+   - Handles job creation
+   - Coordinates page retrieval
+   - Calls the LLM runtime
+   - Stores results
+
+3. LLM Runtime
+   - Executes model inference
+   - Typically Ollama or other self-hosted runtime
+
+4. AI Database
+   - Stores job metadata
+   - Stores AI responses
+   - Fully separated from Docmost DB
+
+5. Optional Redis
+   - Used for background job processing
+
+___
+## WORKFLOW
+
+
+1. UI sends:
+   - space_id
+   - selected_page_ids[]
+   - user message
+
+2. AI Backend:
+   - Creates job entry
+   - Calls Docmost Fetcher
+   - Retrieves selected page content
+
+3. Worker:
+   - Builds structured prompt
+   - Sends prompt to LLM runtime
+   - Receives response
+
+4. Result:
+   - Stored in AI database
+   - Delivered back to UI (SSE or polling)
+___
+## DESIGN PRINCIPLES
+
+• No hardcoded runtime configuration
+• All configuration from environment variables
+• Strict read-only access to Docmost DB
+• Separate AI storage database
+• Deterministic execution flow
+• Explicit UUID handling
+• Docker-first deployment model
+___
+## INSTALLATION
+
+Clone repository:
+```bash
+    git clone <REPO_URL>
+    cd <PROJECT_DIRECTORY>
+```
+Configure environment:
+```bash
+    cp .env.example .env
+    # edit placeholders listed above
+```
+Start containers:
+```bash
+    docker compose up --build -d
+```
+___
+## EXPOSED SERVICES
+
+Docmost Fetcher        -> <DOCMOST_FETCHER_PORT>
+AI Backend API         -> <AI_BACKEND_PORT>
+Docmost PostgreSQL     -> <POSTGRES_DOCMOST_PORT>
+AI PostgreSQL          -> <POSTGRES_AI_PORT>
+Redis (optional)       -> <REDIS_PORT>
+LLM Runtime            -> <OLLAMA_PORT>
+
+___
+## SECURITY MODEL
+
+• Docmost database is read-only from this extension
+• AI database is isolated
+• LLM runtime is internal network only
+• No direct modification of Docmost content
+• All inter-service communication happens over Docker network
+
+___
+## FUTURE EXTENSIONS
+
+- Streaming token responses
+- AI-generated diffs against pages
+- Embedding-based semantic search
+- Scalable background workers
+- Permission-aware AI filtering
+
+___
+## LICENSE
+
+
+Specify your license here.
+
 # ============================================================
