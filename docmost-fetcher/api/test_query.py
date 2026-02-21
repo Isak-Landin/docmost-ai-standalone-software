@@ -1,30 +1,22 @@
-import os
-from typing import Any, Dict, List
+from typing import Any, Dict, Optional
+from datetime import datetime
+import uuid
+from psycopg2.extras import register_uuid
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from flask import jsonify
 
-from datetime import datetime
 
-DB_URL="postgresql://docmost:STRONG_DB_PASSWORD@64.112.126.69:54327/docmost"
-DB_HOST="db"
-DB_PORT="54327"
-DB_NAME="docmost"
-DB_USER="docmost"
-DB_PASS=""
+DB_URL = "postgresql://docmost:STRONG_DB_PASSWORD@64.112.126.69:54327/docmost"
 
+register_uuid()
 
 def _conn():
-    return psycopg2.connect(
-        DB_URL,
-        cursor_factory=RealDictCursor
-    )
+    return psycopg2.connect(DB_URL, cursor_factory=RealDictCursor)
 
-def get_spaces(space_id = None) -> dict[str, Any]:
-    # Dict[str, Dict[str, str, datetime, datetime, str]]
-    _space_id = space_id
-    if _space_id:
+
+def get_spaces(space_id: Optional[str] = None) -> Dict[str, Any]:
+    if space_id:
         sql = """
             SELECT id, name, created_at, updated_at, visibility
             FROM public.spaces
@@ -32,7 +24,7 @@ def get_spaces(space_id = None) -> dict[str, Any]:
               AND deleted_at IS NULL
             ORDER BY created_at ASC
         """
-        params = (_space_id,)
+        params = (space_id,)
     else:
         sql = """
             SELECT id, name, created_at, updated_at, visibility
@@ -44,372 +36,210 @@ def get_spaces(space_id = None) -> dict[str, Any]:
 
     with _conn() as c:
         with c.cursor(cursor_factory=RealDictCursor) as cur:
-            if params:
-                cur.execute(sql, params)
-            else:
-                cur.execute(sql)
-
+            cur.execute(sql, params) if params else cur.execute(sql)
             rows = cur.fetchall()
-            if not rows:
-                return {}
 
-            contents = {}
+    if not rows:
+        return {}
 
-            for row in rows:
-                contents[row["id"]] = {
-                    "name": row["name"], "created_at": row["created_at"], "updated_at": row["updated_at"], "visibility": row["visibility"]
-                }
-            return contents
-
-
-def get_pages_in_space(dict_space_id) -> dict[str, Any]:
-    """
-    Expects format from get_spaces, this is important in case of direct usage from get_pages_content
-
-    @dict_space_id -
-        {
-            space_id: {
-                name: string,
-                created_at: Datetime,
-                updated_at: Datetime,
-                visibility: string
-            },
-            // if get_spaces called without id, all pages below will be presented too, else only first match
-            space_id: {
-                name: string,
-                created_at: Datetime,
-                updated_at: Datetime,
-                visibility: string
-            },
-            space_id: {
-                name: string,
-                created_at: Datetime,
-                updated_at: Datetime,
-                visibility: string
-            },
-            space_id: {
-                name: string,
-                created_at: Datetime,
-                updated_at: Datetime,
-                visibility: string
-            }
+    contents: Dict[str, Any] = {}
+    for row in rows:
+        contents[str(row["id"])] = {
+            "name": row["name"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "visibility": row["visibility"],
         }
+    return contents
+
+
+def get_pages_in_space(spaces_dict: Dict[str, Any]) -> Dict[str, Any]:
     """
-    _space_id = None
-    _error_holder = []
-    contents = {}
-    for key, value in dict_space_id.items():
-        if not _space_id:
-            if not value:
-                value = None
-            # TODO ensure it no longer uses external error key, deprecated, use internal error inside object
-            _error_holder.append(
-                {
-                    "error": "No space_id provided",
-                    "message": "We expected",
-                    "key": _space_id,
-                    "value": value
-                }
-            )
-        sql = f"""
-            SELECT id, title, parent_page_id, creator_id, space_id, created_at, updated_at
-            FROM public.pages
-            WHERE space_id = %s
-                AND deleted_at IS NULL
-            ORDER BY created_at ASC
-        """
+    Input: output of get_spaces()
+    Output:
+      {
+        space_id: {
+          page_id: { ...page meta... },
+          ...
+        },
+        ...
+      }
+    """
+    if not spaces_dict:
+        return {"error": "No spaces provided", "message": "spaces_dict was empty", "value": None}
 
-        params = (_space_id,)
+    contents: Dict[str, Any] = {}
 
-        with _conn() as c:
-            with c.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(sql, params)
+    # Use one connection for all spaces
+    with _conn() as c:
+        with c.cursor(cursor_factory=RealDictCursor) as cur:
+            for space_id, space_meta in spaces_dict.items():
+                # Validate space_id
+                if not space_id:
+                    contents.setdefault("_errors", []).append(
+                        {
+                            "error": "Invalid space_id",
+                            "message": "Encountered falsy space_id key in spaces_dict",
+                            "value": {"space_id": space_id, "space_meta": space_meta},
+                        }
+                    )
+                    continue
+
+                sql = """
+                    SELECT id, title, parent_page_id, creator_id, space_id, created_at, updated_at
+                    FROM public.pages
+                    WHERE space_id = %s
+                      AND deleted_at IS NULL
+                    ORDER BY created_at ASC
+                """
+                cur.execute(sql, (space_id,))
                 rows = cur.fetchall()
 
-                if not rows:
-                    contents[_space_id] = None
-                else:
-                    for row in rows:
-                        contents[_space_id][row["id"]] = {
-                            "title": row["title"],
-                            "parent_page_id": row["parent_page_id"],
-                            "creator_id": row["creator_id"],
-                            "space_id": row["space_id"],
-                            "created_at": row["created_at"],
-                            "updated_at": row["updated_at"],
-                        }
-    if _error_holder:
-        for _json_object in _error_holder:
-            contents.update(_json_object)
+                # Always initialize the container for this space_id
+                contents[space_id] = {}
+
+                for row in rows:
+                    page_id = str(row["id"])
+                    contents[space_id][page_id] = {
+                        "title": row["title"],
+                        "parent_page_id": row["parent_page_id"],
+                        "creator_id": row["creator_id"],
+                        "space_id": row["space_id"],
+                        "created_at": row["created_at"],
+                        "updated_at": row["updated_at"],
+                    }
+
     return contents
 
-def get_pages_content (page_ids_space: Dict = None, space_id: str = None):
+
+def get_pages_content(
+    pages_by_space: Optional[Dict[str, Any]] = None,
+    *,
+    space_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """
-    Expects format from get_pages_in_space, should use directly if not passed from ui
-    {
+    If pages_by_space is provided, fetch content for those page IDs.
+    If not provided but space_id is provided, the function will:
+      1) get_spaces(space_id)
+      2) get_pages_in_space(...)
+      3) fetch content for the discovered pages
+
+    Output:
+      {
         space_id: {
-            page_id: {
-                title: string,
-                parent_page_id: string,
-                creator_id: string,
-                space_id: string,
-                created_at: Datetime,
-                updated_at: Datetime,
-            },
-            page_id: {
-                title: string,
-                parent_page_id: string,
-                creator_id: string,
-                space_id: string,
-                created_at: Datetime,
-                updated_at: Datetime,
-            }
-        },
-        space_id: {
-            page_id: {
-                title: string,
-                parent_page_id: string,
-                creator_id: string,
-                space_id: string,
-                created_at: Datetime,
-                updated_at: Datetime,
-            }
+          page_id: {
+            ...page meta...,
+            "text_content": "...",
+            "content_updated_at": ...
+          }
         }
-    }
+      }
     """
-    _page_ids_space = page_ids_space
-    _space_id = space_id
-    contents = {}
-
-    target = None
-
-    if not _page_ids_space:
-        if not _space_id:
+    if not pages_by_space:
+        if not space_id:
             return {
-                "error": "Missing both page_ids_space (page ids in list) and _space_id",
-                "message": "Must provide space_id or list of space_ids (_page_ids_space)"
+                "error": "Missing input",
+                "message": "Provide pages_by_space or space_id",
+                "value": None,
             }
 
-        _space_dict = get_spaces(_space_id)
-        if not _space_dict:
+        spaces = get_spaces(space_id)
+        if not spaces:
             return {
-                "error": f"No result for _space_id",
-                "message": f"When querying for the space information, we could not find any result for {_space_id}"
+                "error": "Space not found",
+                "message": "No space returned for provided space_id",
+                "value": {"space_id": space_id},
             }
 
-        if "error" in _space_dict:
-            try:
-                value = _space_dict["error"]
-            except KeyError:
-                value = None
-            return {
-                "error": f"Getting space dict from space_id rendered an error or did not find any results",
-                "message": "Make sure that the space_id exists",
-                "value": value
-            }
+        pages_by_space = get_pages_in_space(spaces)
+        if "error" in pages_by_space:
+            return pages_by_space
 
-        _pages_in_space = None
-        try:
-            _pages_in_space = get_pages_in_space(_space_dict)
+    # Collect page IDs per space
+    out: Dict[str, Any] = {}
 
-            if not _pages_in_space or "error" in _pages_in_space:
-                _value = None
-                if "error" in _pages_in_space:
-                    _value = _space_dict["error"]
+    with _conn() as c:
+        with c.cursor(cursor_factory=RealDictCursor) as cur:
+            for sid, pages in pages_by_space.items():
+                if sid == "_errors":
+                    out["_errors"] = pages_by_space["_errors"]
+                    continue
 
-                return {
-                    "error": f"No result for get_pages_in_space({_space_id})",
-                    "message": "When running function to get pages in space from docmost db. We ran into an issue",
-                    "value": _value
-                }
-        except KeyError as e:
-            return {
-                "error": f"{str(e)} - {_pages_in_space}",
-                "message": "Make sure that the space_id exists"
-            }
+                if not isinstance(pages, dict):
+                    out.setdefault("_errors", []).append(
+                        {
+                            "error": "Invalid pages structure",
+                            "message": "Expected dict of page_id -> meta",
+                            "value": {"space_id": sid, "pages": pages},
+                        }
+                    )
+                    continue
 
-    return contents
+                page_ids = [uuid.UUID(pid) for pid in pages.keys()]
+                out[sid] = {}
 
+                if not page_ids:
+                    continue
 
-def check_and_return_errors_in_dict(_dict_to_verify, custom_message = None, custom_value = None, custom_error = None):
-    """
-    Takes a dict and optional custom message and value. Dict is looked in to find references to error,
-    optional message and value are used to create custom error messages if an error is found.
+                # IMPORTANT: Docmost schema may store content in a different table/column.
+                # This assumes public.pages has text_content. If not, change this SQL to the correct table.
+                sql = """
+                    SELECT id, title, text_content, updated_at
+                    FROM public.pages
+                    WHERE id = ANY(%s)
+                      AND deleted_at IS NULL
+                """
+                cur.execute(sql, (page_ids,))
+                rows = cur.fetchall()
+                content_by_id = {str(r["id"]): r for r in rows}
+                
 
-    It is created to be compatible with deprecated versions by looking for error key as well as error value.
-    New versions should always contain error in value and NOT key.
+                # DOING BUG TESTING WITH LIMITED OUTDATA
+                LIMITER = 0
+                for pid, meta in pages.items():
+                    row = content_by_id.get(pid)
+                    out[sid][pid] = dict(meta)
+                    if row:
+                        title = row["title"]
+                        print("Name of file: " + title)
+                        text_content = row.get("text_content")
 
-    IT will allow error value to remain for non-deprecated dicts passed;
-    where value for error is a stringified exception as e.
+                        refactored_text_content = refactor_content_extras(text_content)
+                        print("refactored_text_content: " + refactored_text_content)
 
-    TODO Ensure compatibility if passed dict contains multiple "error" keys, or values.
+                        out[sid][pid]["text_content"] = refactored_text_content
+                        out[sid][pid]["content_updated_at"] = row.get("updated_at")
+                    else:
+                        out[sid][pid]["text_content"] = None
+                        out[sid][pid]["content_updated_at"] = None
 
-    @_dict_to_verify Dict
-    @custom_message String
-    @custom_value String
-    @custom_error_message String
+                    LIMITER += 1
+                    if LIMITER == 3:
+                        break
 
-    @return Dict[str, str]
-    """
+    return out
 
-    """
-    Inspect targets of interest
-    @frame
-    - @f_back       - next outer frame object (this frame’s caller)
-    - @f_code       - code object being executed in this frame
-    - @f_lineno     - current line number in Python source code
-    
-    traceback
-    - @tb_frame     - frame object at this level
-    - @tb_lineno    - current line number in Python source code
-    """
-
-    def create_message(_dict_to_inspect):
-        """
-        Two base cases exist.
-        One where a dict is passed with deprecated structure, using "error" as key for json object.
-        Second where a dict is passed with expected structure, error as part of the values with corresponding field.
-
-        Expected structure:
-        @_dict_to_inspect Dict - is passed by caller and to be inspected
-        """
-        _error_message = ""
-        if "error" in key:
-
-            try:
-                _error_message = _dict_to_inspect["message"]
-            except KeyError:
-                if not custom_message:
-                    _error_message = ""
-                else:
-                    _error_message = custom_message
-            return _error_message
-
-        if "error" in _dict_to_inspect:
-            return None
-        else:
-            return None
-
-    def create_value(_dict_to_inspect):
-        """
-        Two base cases exist.
-        One where a dict is passed with deprecated structure, using "error" as key for json object.
-        Second where a dict is passed with expected structure, error as part of the values with corresponding field.
-
-        Expected structure:
-        @_dict_to_inspect Dict - is passed by caller and to be inspected
-        """
-        _error_value = ""
-        if "error" not in _dict_to_inspect:
-            try:
-                _error_value = _dict_to_inspect["value"]
-            except KeyError:
-                if not custom_value:
-                    _error_value = ""
-                else:
-                    _error_value = custom_value
-            return _error_value
-        if "error" in _dict_to_inspect:
-            return None
-        else:
-            return None
-
-    def create_error(_dict_to_inspect):
-        """
-        Two base cases exist.
-        One where a dict is passed with deprecated structure, using "error" as key for json object.
-        Second where a dict is passed with expected structure, error as part of the values with corresponding field.
-
-        Expected structure:
-        @_dict_to_inspect Dict - is passed by caller and to be inspected
-        """
-        _error_error = ""
-
-        if "error" not in _dict_to_inspect:
-            try:
-                _error_error = _dict_to_inspect["error"]
-            except KeyError:
-                if not custom_error:
-                    _error_error = ""
-                else:
-                    _error_error = custom_error
-            return _error_error
-        if "error" in _dict_to_inspect:
-            return None
-        else:
-            return None
-
-    _error_key_occurrences = 0
-    _error_value_occurrences = 0
-    for key, value in _dict_to_verify.items():
-        if key == "error":
-            _error_key_occurrences += 1
-        if value == "error":
-            _error_value_occurrences += 1
-
-    _error_key_dicts_as_list = []
-    _error_value_dicts = {}
-    for _ in range(_error_key_occurrences):
-        try:
-            _error_key_dicts_as_list.append(_dict_to_verify.pop("error"))
-        except KeyError:
-            print("No more keys corresponding to error were found")
-            print(_dict_to_verify)
-
-    for _ in range(_error_value_occurrences):
-        try:
-            for key, value in _dict_to_verify.items():
-                if "error" in value:
-                    _error_value_dicts[key] = [_dict_to_verify.pop(key)]
-        except KeyError:
-            print("No more values corresponding to error were found")
-            print(_dict_to_verify)
-
-    for item in _error_key_dicts_as_list:
-        _error_dict = item
-        _error_dict_key = "error"
-        _error_dict["message"] = create_message(_error_dict)
-        _error_dict["value"] = create_value(_error_dict)
-        _error_dict["error"] = create_error(_error_dict)
-
-    for key, value in _error_value_dicts:
-        _error_dict = {f"{key}": value}
-        _error_dict_key = key
-        _error_dict["message"] = create_message(_error_dict_key)
-        _error_dict["value"] = create_value(_error_dict)
-        _error_dict["error"] = create_error(_error_dict)
-
-    _error_dict = {}
-    for key, value in _dict_to_verify.items():
-        if "error" in key:
+def refactor_content_extras(_text_content):
+    _last_char = ""
+    _reformated_text = ""
+    for char in _text_content:
+        if char == "\n":
             pass
-        if "error" in key or "error" in value:
+        elif char == "+":
             pass
 
+        if char == "\n" and _last_char == "\n":
+            continue
+        _last_char = char
+        _reformated_text += char
 
+    return _reformated_text
 
-    return _error_dict
+if __name__ == "__main__":
+    space_id = "019baa5f-2451-7287-8189-847a31a7e8ae"
 
-def build_errors_dict(custom_error: str, custom_message: str = None, custom_value: str = None):
-    _error = None
-    _message = None
-    _value = None
+    spaces = get_spaces()
 
-    _error_dict = {}
+    pages = get_pages_in_space(spaces)
 
-    if custom_error:
-        _error_dict["error"] = custom_error
-    if custom_message:
-        _error_dict["message"] = custom_message
-    if custom_value:
-        _error_dict["value"] = custom_value
-
-
-    return _error_dict
-
-
-
-
-if __name__ == '__main__':
-    spaces = get_spaces("019baa5d-007c-7d12-9671-af7cf1b3061a")
-    print(spaces)
+    content = get_pages_content(pages)
