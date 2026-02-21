@@ -110,13 +110,13 @@ ___
 ___
 ## DESIGN PRINCIPLES
 
-• No hardcoded runtime configuration
-• All configuration from environment variables
-• Strict read-only access to Docmost DB
-• Separate AI storage database
-• Deterministic execution flow
-• Explicit UUID handling
-• Docker-first deployment model
+- No hardcoded runtime configuration
+- All configuration from environment variables
+- Strict read-only access to Docmost DB
+- Separate AI storage database
+- Deterministic execution flow
+- Explicit UUID handling
+- Docker-first deployment model
 ___
 ## INSTALLATION
 
