@@ -1,6 +1,6 @@
 import os
-from typing import Any, Dict
-
+from typing import Any, Dict, Optional
+import uuid
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from flask import Flask, request, jsonify
@@ -16,112 +16,24 @@ LISTEN_PORT = int(os.getenv("LISTEN_PORT", "8099"))
 
 app = Flask(__name__)
 
-def _conn():
-    return psycopg2.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASS,
-        cursor_factory=RealDictCursor,
-    )
+"""
+# TODO - This is the get_pages_content function - DONE
+def run_for_all_pages_content(_space_id):
+    pass
 
+# TODO
+def run_for_pages_by_space():
+    pass
 
-def get_all_spaces() -> Dict[str, Any]:
-    sql_spaces = """
-        SELECT
-            id,
-            name
-        FROM public.spaces
-        WHERE deleted_at IS NULL
-        ORDER BY created_at ASC
-    """
+# TODO
+def run_for_space():
+    pass
 
-    with _conn() as c:
-        with c.cursor() as cur:
-            cur.execute(sql_spaces)
-            rows = cur.fetchall()
+# TODO
+def run_for_all_spaces():
+    pass
+"""
 
-    if not rows:
-        return {"ok": True, "spaces": []}
-
-    spaces = []
-    for row in rows:
-        spaces.append({
-            "id": str(row["id"]),
-            "name": row["name"],
-        })
-
-    return {
-        "ok": True,
-        "spaces": spaces,
-    }
-
-
-
-def get_content(space_id: str, page_id: str) -> Dict[str, Any]:
-    sql = """
-        SELECT
-            id,
-            space_id,
-            title,
-            text_content,
-            content,
-            updated_at,
-            deleted_at
-        FROM public.pages
-        WHERE id = %(page_id)s AND space_id = %(space_id)s
-        LIMIT 1
-    """
-    with _conn() as c:
-        with c.cursor() as cur:
-            cur.execute(sql, {"page_id": page_id, "space_id": space_id})
-            row = cur.fetchone()
-
-    if not row:
-        if not page_id:
-            page_id = None
-        else:
-            page_id = str(page_id)
-        if not space_id:
-            space_id = None
-        else:
-            space_id = str(space_id)
-
-        return {
-            "ok": False,
-            "error": "not_found row for page_id and space_id",
-            "message": f"page_id was - {page_id}, space_id was - {space_id}",
-        }
-
-    return {
-        "ok": True,
-        "page": {
-            "id": str(row["id"]),
-            "space_id": str(row["space_id"]),
-            "title": row.get("title"),
-            "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
-            "deleted_at": row["deleted_at"].isoformat() if row.get("deleted_at") else None,
-            "text_content": row.get("text_content") or "",
-            "content": row.get("content") or {},
-        },
-    }
-
-@app.get("/")
-def http_home_list_spaces():
-    return jsonify(get_all_spaces())
-
-@app.get("/get-content")
-def http_get_content():
-    space_id = request.args.get("space_id", "").strip()
-    page_id = request.args.get("page_id", "").strip()
-    if not space_id or not page_id:
-        return jsonify({"ok": True})
-    return jsonify(get_content(space_id=space_id, page_id=page_id))
-
-@app.get("/health")
-def health():
-    return jsonify({"ok": True})
 
 if __name__ == "__main__":
     app.run(host=LISTEN_HOST, port=LISTEN_PORT)

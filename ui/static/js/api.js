@@ -1,12 +1,12 @@
 export async function fetchSpaces(){
-  const r = await fetch('/api/spaces');
+  const r = await fetch('/docmost/api');
   const data = await r.json();
   if (!data.ok) throw new Error('spaces failed');
   return data.spaces || [];
 }
 
 export async function fetchPages(spaceId){
-  const r = await fetch(`/api/spaces/${encodeURIComponent(spaceId)}/pages`);
+  const r = await fetch(`/docmost/api/${encodeURIComponent(spaceId)}/pages`);
   const data = await r.json();
   if (!data.ok) throw new Error('pages failed');
   return data.pages || [];

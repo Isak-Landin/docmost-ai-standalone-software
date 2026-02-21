@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 from datetime import datetime
 import uuid
 from psycopg2.extras import register_uuid
@@ -113,9 +113,9 @@ def get_pages_in_space(spaces_dict: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def get_pages_content(
-    pages_by_space: Optional[Dict[str, Any]] = None,
-    *,
-    space_id: Optional[str] = None,
+        pages_by_space: Optional[Dict[str, Any]] = None,
+        *,
+        space_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     If pages_by_space is provided, fetch content for those page IDs.
@@ -181,8 +181,6 @@ def get_pages_content(
                 if not page_ids:
                     continue
 
-                # IMPORTANT: Docmost schema may store content in a different table/column.
-                # This assumes public.pages has text_content. If not, change this SQL to the correct table.
                 sql = """
                     SELECT id, title, text_content, updated_at
                     FROM public.pages
@@ -192,20 +190,14 @@ def get_pages_content(
                 cur.execute(sql, (page_ids,))
                 rows = cur.fetchall()
                 content_by_id = {str(r["id"]): r for r in rows}
-                
 
-                # DOING BUG TESTING WITH LIMITED OUTDATA
-                LIMITER = 0
                 for pid, meta in pages.items():
                     row = content_by_id.get(pid)
                     out[sid][pid] = dict(meta)
                     if row:
-                        title = row["title"]
-                        print("Name of file: " + title)
                         text_content = row.get("text_content")
 
-                        refactored_text_content = refactor_content_extras(text_content)
-                        print("refactored_text_content: " + refactored_text_content)
+                        refactored_text_content = refactor_content(text_content)
 
                         out[sid][pid]["text_content"] = refactored_text_content
                         out[sid][pid]["content_updated_at"] = row.get("updated_at")
@@ -213,29 +205,118 @@ def get_pages_content(
                         out[sid][pid]["text_content"] = None
                         out[sid][pid]["content_updated_at"] = None
 
-                    LIMITER += 1
-                    if LIMITER == 3:
-                        break
 
     return out
 
-def refactor_content_extras(_text_content):
-    _last_char = ""
+# ---------------------------------------- #
+# ------ SPACES SPECIFIC FUNCTIONS ------- #
+# ---------------------------------------- #
+def get_space_id_from_page_id(_page_id):
+    if type(_page_id) != uuid:
+        _page_id = uuid.UUID(_page_id).hex
+    sql = """
+        SELECT space_id
+        FROM public.pages
+        WHERE id = %s
+        AND deleted_at IS NULL
+    """
+
+    param = (_page_id,)
+    with _conn() as c:
+        with c.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql, param)
+            rows = cur.fetchone()
+            if rows:
+                return rows["space_id"]
+            else:
+                return None
+# ---------------------------------------- #
+# --- END OF SPACES SPECIFIC FUNCTIONS --- #
+# ---------------------------------------- #
+
+# ---------------------------------------- #
+# ------ PAGES SPECIFIC FUNCTIONS -------- #
+# ---------------------------------------- #
+
+def get_single_page_content(_page_id):
+    if type(_page_id) != uuid.UUID:
+        _page_id = uuid.UUID(_page_id)
+
+    sql = """
+        Select id, text_content, space_id
+        FROM public.pages
+        WHERE id = %s
+        AND deleted_at IS NULL
+    """
+
+    params = _page_id
+
+    with _conn() as c:
+        with c.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql, (params, ))
+            row = cur.fetchone()
+            if row:
+                __content = refactor_content(row["text_content"])
+                __space_id = str(row["space_id"])
+                __page_id = str(row["id"])
+
+
+                sql_meta = """
+                    SELECT title, parent_page_id, creator_id, created_at, updated_at
+                    FROM public.pages
+                    WHERE id = %s
+                    AND deleted_at IS NULL
+                """
+                cur.execute(sql_meta, (params, ))
+                __meta = cur.fetchone()
+
+                output = {
+                    __space_id: {
+                        __page_id: {
+
+                        }
+                    }
+                }
+
+
+                output[__space_id][__page_id] = __meta
+                output[__space_id][__page_id]["text_content"] = __content
+                return output
+            else:
+                return None
+
+
+def refactor_content(_text_content):
+    _last_char_list = []
     _reformated_text = ""
     for char in _text_content:
-        if char == "\n":
-            pass
-        elif char == "+":
-            pass
+        should_append = True
+        try:
+            if len(_last_char_list) >= 2:
+                if char == "+" and _last_char_list[-1] == "+" and _last_char_list[-2] == "+":
+                    should_append = False
+                elif char == "\n" and _last_char_list[-1] == "\n":
+                    should_append = False
+            if should_append:
+                _reformated_text += char
 
-        if char == "\n" and _last_char == "\n":
+            _last_char_list.append(char)
+        except IndexError as e:
+            print("IndexError: ", e)
             continue
-        _last_char = char
-        _reformated_text += char
+        except Exception as e:
+            print("Other error when refactoring text content: ", e)
+            continue
 
     return _reformated_text
 
+# ---------------------------------------- #
+# --- END OF PAGES SPECIFIC FUNCTIONS ---- #
+# ---------------------------------------- #
+
+
 if __name__ == "__main__":
+    """
     space_id = "019baa5f-2451-7287-8189-847a31a7e8ae"
 
     spaces = get_spaces()
@@ -243,3 +324,5 @@ if __name__ == "__main__":
     pages = get_pages_in_space(spaces)
 
     content = get_pages_content(pages)
+    """
+    print(get_single_page_content("019c2841-e044-771b-b582-d3d843c06115"))

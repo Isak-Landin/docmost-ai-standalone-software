@@ -6,7 +6,7 @@ from flask import Flask, jsonify, request, send_from_directory
 
 BACKEND_URL = os.getenv("BACKEND_BASE_URL", "http://backend:8100")
 DOCMOST_FETCHER_EXTERNAL_BASE_URL = os.getenv("DOCMOST_FETCHER_EXTERNAL_BASE_URL", "http://docmost:8099")
-docmost_fetcher_spaces_endpoint = DOCMOST_FETCHER_EXTERNAL_BASE_URL + os.getenv("SPACES_PATH", "/api/spaces")
+docmost_fetcher_spaces_endpoint = DOCMOST_FETCHER_EXTERNAL_BASE_URL + os.getenv("DOCMOST_FETCHER_API", "/docmost/api")
 
 UI_LISTEN_HOST = os.getenv("UI_LISTEN_HOST", "0.0.0.0")
 UI_LISTEN_PORT = int(os.getenv("UI_LISTEN_PORT", "8090"))
@@ -40,7 +40,7 @@ def api_chat():
         }
     )
 
-@app.get("/api/spaces")
+@app.get("/docmost/api")
 def api_spaces():
     all_spaces = requests.get(docmost_fetcher_spaces_endpoint).json()
 
