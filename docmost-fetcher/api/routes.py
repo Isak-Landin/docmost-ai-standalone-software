@@ -35,11 +35,20 @@ def http_home_list_spaces():
 
 @docmost_api.get("/get-content")
 def http_get_content_specific():
-    space_id = request.args.get("space_id", "").strip()
+    """
+    returns content
+    In the format
+    space_id: {
+        page_id: {
+            ... meta data ...
+            text_content: str
+        }
+    }
+    """
     page_id = request.args.get("page_id", "").strip()
-    if not space_id or not page_id:
-        return jsonify({"ok": True})
-    return jsonify(get_contents(space_id=space_id, page_id=page_id))
+    content = get_single_page_content(page_id)
+
+
 
 @docmost_api.get("/get-content-single")
 def http_get_content_single(_space_id):

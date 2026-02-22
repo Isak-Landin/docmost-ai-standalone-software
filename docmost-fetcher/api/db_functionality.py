@@ -347,3 +347,41 @@ def refactor_content(_text_content):
 # ---------------------------------------- #
 
 
+# ---------------------------------------- #
+# ------------ GENERAL TOOLS ------------- #
+# ---------------------------------------- #
+
+def verify_dictionary_of_type(_dict, _type: str):
+    types_allowed = (
+        "content_single",
+        "content_multi",
+        "page_single",
+        "page_multi",
+        "space_single",
+        "space_multi",
+    )
+
+    if type(_dict) != dict:
+        return {
+            "error": f"Passed dict is not a dictionary: {_dict}",
+            "message": "You passed an incorrect dict when attempting to verify dictionary structure",
+            "value": f"{_dict}",
+            "allowed": "type == dict",
+        }
+
+    if _type not in types_allowed:
+        return {
+            "error": f"Passed type is not allowed",
+            "message": "You passed an incorrect type when attempting to verify dictionary structure",
+            "value": f"{_type}",
+            "allowed": str(types_allowed),
+        }
+
+    if _type == "content_single":
+
+
+
+
+# ---------------------------------------- #
+# -------- END OF GENERAL TOOLS  --------- #
+# ---------------------------------------- #

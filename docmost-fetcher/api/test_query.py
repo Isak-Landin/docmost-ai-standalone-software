@@ -1,3 +1,4 @@
+import json
 from typing import Any, Dict, Optional, List
 from datetime import datetime
 import uuid
@@ -5,6 +6,8 @@ from psycopg2.extras import register_uuid
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
+
+from datetime import datetime
 
 
 DB_URL = "postgresql://docmost:STRONG_DB_PASSWORD@64.112.126.69:54327/docmost"
@@ -271,15 +274,13 @@ def get_single_page_content(_page_id):
                 __meta = cur.fetchone()
 
                 output = {
-                    __space_id: {
+                    __space_id:{
                         __page_id: {
-
+                            key: val for key, val in __meta.items()
                         }
                     }
                 }
 
-
-                output[__space_id][__page_id] = __meta
                 output[__space_id][__page_id]["text_content"] = __content
                 return output
             else:
@@ -314,15 +315,175 @@ def refactor_content(_text_content):
 # --- END OF PAGES SPECIFIC FUNCTIONS ---- #
 # ---------------------------------------- #
 
+def validate_dict(_dict, _type):
+    __levels = 0
+    __keys_times_expectation = 0
+    __keys_static = []
+    __values_expectation = []
+
+    types_allowed = (
+        "content_single",
+        "content_multi",
+        "page_single",
+        "page_multi",
+        "space_single",
+        "space_multi",
+    )
+
+    if type(_dict) != dict:
+        return {
+            "error": f"Passed dict is not a dictionary: {_dict}",
+            "message": "You passed an incorrect dict when attempting to verify dictionary structure",
+            "value": f"{_dict}",
+            "allowed": "type == dict",
+        }
+
+    if _type not in types_allowed:
+        return {
+            "error": f"Passed type is not allowed",
+            "message": "You passed an incorrect type when attempting to verify dictionary structure",
+            "value": f"{_type}",
+            "allowed": str(types_allowed),
+        }
+
+    # TODO To generalise this in the for i in range statement, we must ensure that we are able to generalise
+    #  all levels and searching without having to create manual management for differences in levels.
+    #   For first level in content single, we expect 1 key, one dict as value; level 2 - one key one dict as value.
+    #    How can we ensure that we have taken these expectations into account? We must create a list of ints that represent
+    #     These type of dict expectations
+    if _type == "content_single":
+        __levels = 3
+        __key_value_level_expectation = [[1, 1], [], []]
+        __keys_times_expectation = 6
+        __keys_static = [
+            "title", "parent_page_id", "creator_id",
+            "space_id", "created_at", "updated_at",
+        ]
+        __values_expectation = [str, datetime, datetime, uuid.UUID, uuid.UUID, uuid.UUID, None]
+
+    for i in range(__levels):
+        pass
+
+    """
+    for key, value in _dict.items():
+        # First level ensure key (space_id) is of type uuid after converted
+        if type(uuid.UUID(key)) == uuid.UUID:
+            pass
+        else:
+            try:
+                converted_key = uuid.UUID(key)
+                if not type(converted_key) == uuid.UUID:
+                    return False
+            except ValueError:
+                return False
+
+        # second level, ensure key (page_id) is of type uuid after converted
+        for _key, _value in value.items():
+            if type(uuid.UUID(_key)) == uuid.UUID:
+                pass
+            else:
+                try:
+                    _converted_key = uuid.UUID(_key)
+                    if not type(_converted_key) == uuid.UUID:
+                        return False
+                except ValueError:
+                    return False
+
+            # EXPECTED TYPES FOR NEXT KEY, VALUE ITERATION
+            for __key, __value in _value.items():
+                # Count key expectations
+                if __keys_expectation[0] <= 0:
+                    return False
+                if type(__key) != __keys_expectation[1]:
+                    return False
+                else:
+                    __keys_expectation = [__keys_expectation[0] - 1, __keys_expectation[1]]
+
+
+                # Count absolute value expectations
+                if len(__values_expectation) <= 0:
+                    return False
+                if type(__value) not in __values_expectation:
+                    return False
+                if type(__value) == str or type(__value) == datetime and type(__value) in __values_expectation:
+                    __values_expectation.pop(-1)
+                else:
+                    return False"""
+
+
+    return True
+
+
+
+
+
+
 
 if __name__ == "__main__":
-    """
     space_id = "019baa5f-2451-7287-8189-847a31a7e8ae"
-
+    single_page_id = "019baa5f-4a6f-72f6-bca4-fab6e32025b3"
+    """
     spaces = get_spaces()
 
     pages = get_pages_in_space(spaces)
-
     content = get_pages_content(pages)
     """
-    print(get_single_page_content("019c2841-e044-771b-b582-d3d843c06115"))
+
+    file_path_prod = "../backend/schemas/docmost_db_schemas/single_page_content.json"
+    file_path_dev = "../../backend/schemas/docmost_db_schemas/single_page_content.json"
+    json_dev = {}
+
+
+    def depth(d):
+        return max(depth(v) if isinstance(v, dict) else 0 for v in d.values()) + 1
+
+    def convert_schema_to_key_value_relation_list(_j: dict):
+        relational_list = []
+        __depth = depth(_j)
+        for __i in range(__depth):
+            _keys_in_level = _j.keys()
+            _values_in_level = _j.values()
+
+            _keys_in_level_type = [type(__key) for __key in _keys_in_level]
+            _values_in_level_type = [type(__value) for __value in _values_in_level]
+            _level_relation_type = [_keys_in_level_type, _values_in_level_type]
+
+            relational_list.append(_level_relation_type)
+            print(_keys_in_level)
+            print(_keys_in_level_type)
+            print(_values_in_level)
+            print(_values_in_level_type)
+            print(_level_relation_type)
+            print("#######################################")
+
+        return relational_list
+
+
+
+    content = get_single_page_content(single_page_id)
+
+    # ------------ RULES ------------ #
+    with open(file_path_dev, "r") as f:
+        json_dev = json.load(f)
+
+    __levels = depth(content)
+    __count_key_value_per_level = []
+    schema_to_list_ = convert_schema_to_key_value_relation_list(json_dev)
+    # -------- END OF RULES --------- #
+
+    exit()
+    print(schema_to_list_)
+    list_key = []
+    list_value = []
+    _new_content = content
+    for i in range(__levels):
+        keys = _new_content.keys()
+        values = _new_content.values()
+
+        for key in keys:
+            list_key.append(key)
+        for value in values:
+            list_value.append(value)
+
+
+

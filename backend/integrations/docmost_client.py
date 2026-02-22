@@ -9,6 +9,8 @@ def fetch_page_content(*, space_id: str, page_id: str) -> Dict[str, Any]:
         raise RuntimeError("DOCMOST_FETCHER_INTERNAL_BASE_URL is required")
 
     url = f"{base}/get-content"
-    r = requests.get(url, params={"space_id": space_id, "page_id": page_id}, timeout=20)
+    # REMOVED SPACE_ID FOR SINGLE PAGE CONTENT FETCH
+    #  params={"space_id": space_id, "page_id": page_id}
+    r = requests.get(url, params={"page_id": page_id}, timeout=20)
     r.raise_for_status()
     return r.json()
