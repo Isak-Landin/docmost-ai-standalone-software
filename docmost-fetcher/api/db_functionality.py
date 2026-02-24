@@ -5,8 +5,11 @@ from typing import Any, Dict, List, Tuple, Optional
 
 import uuid
 from psycopg2.extras import RealDictCursor, RealDictRow
-from uuid import UUID
-from datetime import datetime
+
+from utils.schema_db_validation_management import refactor_content
+import logging
+
+logger = logging.getLogger(__name__)
 
 DB_URL = os.environ.get("DB_URL", "")
 DB_HOST = os.getenv("DOCMOST_DB_HOST", "db")
@@ -228,7 +231,7 @@ def get_contents(
 # ------ SPACES SPECIFIC FUNCTIONS ------- #
 # ---------------------------------------- #
 def get_space_id_from_page_id(_page_id):
-    if type(_page_id) != uuid:
+    if type(_page_id) != uuid.UUID:
         _page_id = uuid.UUID(_page_id).hex
     sql = """
         SELECT space_id
@@ -269,8 +272,6 @@ Output expected for pages - should be applied throughout all functions for pages
       }
 """
 
-
-# TODO - DONE - This also matches the output expectations for page content format expectations
 def get_single_page_content(_page_id):
     if type(_page_id) != uuid.UUID:
         _page_id = uuid.UUID(_page_id)
@@ -286,12 +287,13 @@ def get_single_page_content(_page_id):
 
     with _conn() as c:
         with c.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(sql, (params,))
+            cur.execute(sql, (params, ))
             row = cur.fetchone()
             if row:
                 __content = refactor_content(row["text_content"])
                 __space_id = str(row["space_id"])
                 __page_id = str(row["id"])
+
 
                 sql_meta = """
                     SELECT title, parent_page_id, creator_id, created_at, updated_at
@@ -299,89 +301,23 @@ def get_single_page_content(_page_id):
                     WHERE id = %s
                     AND deleted_at IS NULL
                 """
-                cur.execute(sql_meta, (params,))
+                cur.execute(sql_meta, (params, ))
                 __meta = cur.fetchone()
 
                 output = {
-                    __space_id: {
+                    __space_id:{
                         __page_id: {
-
+                            key: val for key, val in __meta.items()
                         }
                     }
                 }
 
-                output[__space_id][__page_id] = __meta
                 output[__space_id][__page_id]["text_content"] = __content
                 return output
             else:
                 return None
 
 
-def refactor_content(_text_content):
-    _last_char_list = []
-    _reformated_text = ""
-    for char in _text_content:
-        should_append = True
-        try:
-            if len(_last_char_list) >= 2:
-                if char == "+" and _last_char_list[-1] == "+" and _last_char_list[-2] == "+":
-                    should_append = False
-                elif char == "\n" and _last_char_list[-1] == "\n":
-                    should_append = False
-            if should_append:
-                _reformated_text += char
-
-            _last_char_list.append(char)
-        except IndexError as e:
-            print("IndexError: ", e)
-            continue
-        except Exception as e:
-            print("Other error when refactoring text content: ", e)
-            continue
-
-    return _reformated_text
-
-
 # ---------------------------------------- #
 # --- END OF PAGES SPECIFIC FUNCTIONS ---- #
-# ---------------------------------------- #
-
-
-# ---------------------------------------- #
-# ------------ GENERAL TOOLS ------------- #
-# ---------------------------------------- #
-
-def verify_dictionary_of_type(_dict, _type: str):
-    types_allowed = (
-        "content_single",
-        "content_multi",
-        "page_single",
-        "page_multi",
-        "space_single",
-        "space_multi",
-    )
-
-    if type(_dict) != dict:
-        return {
-            "error": f"Passed dict is not a dictionary: {_dict}",
-            "message": "You passed an incorrect dict when attempting to verify dictionary structure",
-            "value": f"{_dict}",
-            "allowed": "type == dict",
-        }
-
-    if _type not in types_allowed:
-        return {
-            "error": f"Passed type is not allowed",
-            "message": "You passed an incorrect type when attempting to verify dictionary structure",
-            "value": f"{_type}",
-            "allowed": str(types_allowed),
-        }
-
-    if _type == "content_single":
-
-
-
-
-# ---------------------------------------- #
-# -------- END OF GENERAL TOOLS  --------- #
 # ---------------------------------------- #

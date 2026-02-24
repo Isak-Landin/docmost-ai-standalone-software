@@ -41,4 +41,5 @@ def run_forever() -> None:
             repo.set_job_done(job_id=job.id, status="done", final_text=final_text)
 
         except Exception as e:
+            logger.warning(f"An Error occurred during runtime " + f"str(e)")
             repo.set_job_failed(job_id=job.id, status="failed", error_text=str(e))

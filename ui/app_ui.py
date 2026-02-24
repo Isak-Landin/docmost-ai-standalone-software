@@ -10,6 +10,9 @@ docmost_fetcher_spaces_endpoint = DOCMOST_FETCHER_EXTERNAL_BASE_URL + os.getenv(
 
 UI_LISTEN_HOST = os.getenv("UI_LISTEN_HOST", "0.0.0.0")
 UI_LISTEN_PORT = int(os.getenv("UI_LISTEN_PORT", "8090"))
+from logging_config import setup_logging
+setup_logging(_service="ui")
+
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 

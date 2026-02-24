@@ -49,6 +49,7 @@ def register_routes(app: Flask) -> None:
             space_uuid = UUID(space_id) if space_id else None
             selected_uuids = [UUID(str(x)) for x in selected]
         except Exception as e:
+            logger.warning(f"An Error occurred during runtime " + f"str(e)")
             return jsonify({
                 "ok": False,
                 "error": f"{e}",
@@ -83,6 +84,7 @@ def register_routes(app: Flask) -> None:
         try:
             job_id = UUID(job_id_raw)
         except Exception as e:
+            logger.warning(f"An Error occurred during runtime " + f"str(e)")
             return jsonify({
                 "ok": False,
                 "error": f"{str(e)}",

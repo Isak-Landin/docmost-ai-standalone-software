@@ -5,6 +5,8 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from flask import Flask, request, jsonify
 from api.routes import docmost_api
+from logging_config import setup_logging
+setup_logging(_service="docmost-fetcher")
 
 
 LISTEN_HOST = os.getenv("UI_LISTEN_HOST", "0.0.0.0")
