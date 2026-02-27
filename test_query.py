@@ -299,7 +299,7 @@ if __name__ == "__main__":
 
 
     file_path_prod = "../backend/schemas/docmost_db_schemas/single_page_content.json"
-    file_path_dev = "../../backend/schemas/docmost_db_schemas/single_page_content.json"
+    file_path_dev = "schemas/docmost_db_schemas/single_page_content.json"
     json_dev = {}
 
 
