@@ -2,8 +2,6 @@ import os
 
 from flask import Blueprint, request, jsonify
 import requests
-from db_functionality import get_spaces
-from utils.schema_db_validation_management import _validate_dict
 
 from db_functionality import (
 get_spaces, get_pages, get_contents, get_space_id_from_page_id,
@@ -28,41 +26,8 @@ if MODE == "prod":
     #  Ensure base path contains trailing / always.
     SCHEMA_BASE_PATH = os.getenv("SCHEMA_BASE_PATH", "./schemas/")
 else:
-    SCHEMA_BASE_PATH = os.getenv("SCHEMA_BASE_PATH_DEV", "../schemas/")
+    SCHEMA_BASE_PATH = os.getenv("SCHEMA_BASE_PATH_DEV", "/home/isakadmin/docmost-ai-standalone-software/schemas/")
 
-
-# SCHEMA ENVS INDEPENDENT OF PROD AND DEV
-SINGLE_PAGE_CONTENT_SCHEMA_DICT = SCHEMA_BASE_PATH + os.getenv(
-    "SINGLE_PAGE_CONTENT_SCHEMA_FILE", "single_page_content.json"
-)
-SINGLE_PAGE_SCHEMA_DICT = SCHEMA_BASE_PATH + os.getenv(
-    "SINGLE_PAGE_SCHEMA_FILE", "single_page.json"
-)
-SINGLE_SPACE_SCHEMA_DICT = SCHEMA_BASE_PATH + os.getenv(
-    "SINGLE_SPACE_SCHEMA_FILE", "single_space.json"
-)
-
-
-ALLOWED_SCHEMA_TYPES = (
-    "content_single",
-    "content_multi",
-    "page_single",
-    "page_multi",
-    "space_single",
-    "space_multi",
-)
-
-
-
-
-SCHEMAS = {
-    "content_single": SINGLE_PAGE_CONTENT_SCHEMA_DICT,
-    "content_multi": SINGLE_PAGE_CONTENT_SCHEMA_DICT,
-    "page_single": SINGLE_PAGE_SCHEMA_DICT,
-    "page_multi": SINGLE_PAGE_SCHEMA_DICT,
-    "space_single": SINGLE_SPACE_SCHEMA_DICT,
-    "space_multi": SINGLE_SPACE_SCHEMA_DICT,
-}
 
 # ---------------------------------------- #
 # ---------------- ROUTES ---------------- #
