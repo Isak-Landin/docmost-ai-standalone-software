@@ -1,14 +1,19 @@
+import json
 from uuid import UUID
 import uuid
 from datetime import datetime
 from collections import deque
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------- #
+# ---------------------------------------------- #
 # ------ PAGES QUERY REFACTOR FUNCTIONS -------- #
-# ---------------------------------------- #
+# ---------------------------------------------- #
+
+# This function is intended to be used by page content db query functions to reformat content -
+#  by removing extra "+" and "\n".
 def refactor_content(_text_content):
     _last_char_list = []
     _reformated_text = ""
@@ -37,18 +42,18 @@ def refactor_content(_text_content):
 
 
 # ------------------------------------------------------------ #
-# ------ VALIDATE FOR ROUTE OUTPUT VS SCHEMAS FUNCTIONS ------ #
+# ------ VALIDATE FOR QUERY OUTPUT VS SCHEMAS FUNCTIONS ------ #
 # ------------------------------------------------------------ #
-def _validate_against_schema(refactored_envelope: dict, schema: dict):
+def _validate_against_schema(refactored_envelope: dict, schema_sot: dict):
     """
     Validates that `data` matches the structural type mapping of `schema`.
     Uses convert_schema_to_key_value_relation_list().
     """
 
     if not isinstance(refactored_envelope, dict):
-        return {"ok": False, "error": "not_a_dict"}
+        return False, {"ok": False, "error": "not_a_dict"}
 
-    schema_rel = convert_schema_to_key_value_relation_list(schema)
+    schema_rel = convert_schema_to_key_value_relation_list(schema_sot)
     envelope_rel = convert_schema_to_key_value_relation_list(refactored_envelope)
 
     # Depth check
@@ -56,7 +61,7 @@ def _validate_against_schema(refactored_envelope: dict, schema: dict):
         logger.critical(
             f"Schema mismatch: len({schema_rel}) != len({envelope_rel})" + " ---- Took place during _validate_against_schema()"
         )
-        return {
+        return False, {
             "ok": False,
             "error": "depth_mismatch",
             "expected_depth": len(schema_rel),
@@ -73,7 +78,7 @@ def _validate_against_schema(refactored_envelope: dict, schema: dict):
         data_value_types = set(data_level[1])
 
         if not data_key_types.issubset(schema_key_types):
-            return {
+            return False, {
                 "ok": False,
                 "error": "key_type_mismatch",
                 "depth": depth,
@@ -82,7 +87,7 @@ def _validate_against_schema(refactored_envelope: dict, schema: dict):
             }
 
         if not data_value_types.issubset(schema_value_types):
-            return {
+            return False, {
                 "ok": False,
                 "error": "value_type_mismatch",
                 "depth": depth,
@@ -90,7 +95,7 @@ def _validate_against_schema(refactored_envelope: dict, schema: dict):
                 "got": list(data_value_types),
             }
 
-    return {"ok": True}
+    return True, {"ok": True}
 
 
 def convert_schema_to_key_value_relation_list(root: dict):
@@ -151,23 +156,84 @@ def convert_schema_to_key_value_relation_list(root: dict):
 
     return relational_list
 
+# MODE
+MODE = os.getenv("MODE", "dev")
+if MODE == "prod":
+    # SCHEMA FILES ENVS PROD
+    #  Ensure base path contains trailing / always.
+    SCHEMA_BASE_PATH = os.getenv("SCHEMA_BASE_PATH", "./schemas/")
+else:
+    SCHEMA_BASE_PATH = os.getenv("SCHEMA_BASE_PATH_DEV", "/home/isakadmin/docmost-ai-standalone-software/schemas/")
 
-def _validate_dict(data: dict, schema_type: str, allowed_types: tuple, schemas: dict):
+
+# SCHEMA ENVS INDEPENDENT OF PROD AND DEV
+_SINGLE_PAGE_CONTENT_SCHEMA_FILE_NAME = os.getenv(
+    "SINGLE_PAGE_CONTENT_SCHEMA_FILE", "single_page_content.json"
+)
+_SINGLE_PAGE_SCHEMA_FILE_NAME = os.getenv(
+    "SINGLE_PAGE_SCHEMA_FILE", "single_page.json"
+)
+_SINGLE_SPACE_SCHEMA_FILE_NAME = os.getenv(
+    "SINGLE_SPACE_SCHEMA_FILE", "single_space.json"
+)
+
+SINGLE_PAGE_CONTENT_SCHEMA_FILE_PATH = SCHEMA_BASE_PATH + _SINGLE_PAGE_CONTENT_SCHEMA_FILE_NAME
+SINGLE_PAGE_SCHEMA_FILE_PATH = SCHEMA_BASE_PATH + _SINGLE_PAGE_SCHEMA_FILE_NAME
+SINGLE_SPACE_SCHEMA_FILE_PATH = SCHEMA_BASE_PATH + _SINGLE_SPACE_SCHEMA_FILE_NAME
+
+# DICTS FROM SCHEMA FILES
+SINGLE_PAGE_CONTENT_SCHEMA_DICT = {}
+SINGLE_PAGE_SCHEMA_DICT = {}
+SINGLE_SPACE_SCHEMA_DICT = {}
+
+for file in (SINGLE_PAGE_SCHEMA_FILE_PATH, SINGLE_PAGE_CONTENT_SCHEMA_FILE_PATH, SINGLE_SPACE_SCHEMA_FILE_PATH):
+    with open(file, "r") as f:
+        if _SINGLE_PAGE_CONTENT_SCHEMA_FILE_NAME in file:
+            SINGLE_PAGE_CONTENT_SCHEMA_DICT = json.load(f)
+        elif _SINGLE_PAGE_SCHEMA_FILE_NAME in file:
+            _SINGLE_PAGE_SCHEMA_FILE_NAME = json.load(f)
+        elif _SINGLE_SPACE_SCHEMA_FILE_NAME in file:
+            SINGLE_SPACE_SCHEMA_DICT = json.load(f)
+
+
+SCHEMAS = {
+    "content_single": SINGLE_PAGE_CONTENT_SCHEMA_DICT,
+    "content_multi": SINGLE_PAGE_CONTENT_SCHEMA_DICT,
+    "page_single": SINGLE_PAGE_SCHEMA_DICT,
+    "page_multi": SINGLE_PAGE_SCHEMA_DICT,
+    "space_single": SINGLE_SPACE_SCHEMA_DICT,
+    "space_multi": SINGLE_SPACE_SCHEMA_DICT,
+}
+
+allowed_types = (
+    "content_single",
+    "content_multi",
+    "page_single",
+    "page_multi",
+    "space_single",
+    "space_multi",
+)
+
+# ---------------------------------------------------------------------------------- #
+# ------ EXPOSED FUNCTION TO BE USED TO VERIFY DICT BEFORE RETURNING RESPONSE ------ #
+# ---------------------------------------------------------------------------------- #
+
+def validate_dict(schema_to_check: dict, schema_type: str):
     if schema_type not in allowed_types:
         logger.warning(f"Invalid schema type {schema_type}")
-        return {
+        return False, {
             "ok": False,
             "error": "invalid_schema_type",
             "allowed": list(allowed_types),
         }
 
-    schema = schemas.get(schema_type)
+    schema = SCHEMAS.get(schema_type)
     if not isinstance(schema, dict):
         logger.critical(f"Schema missing or invalid for type={schema_type}")
-        return {
+        return False, {
             "ok": False,
             "error": "schema_missing",
             "value": schema_type,
         }
 
-    return _validate_against_schema(data, schema)
+    return _validate_against_schema(schema_to_check, schema)
