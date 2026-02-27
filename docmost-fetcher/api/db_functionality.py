@@ -1,12 +1,12 @@
 import os
 import psycopg2
 
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, Optional
 
 import uuid
-from psycopg2.extras import RealDictCursor, RealDictRow
+from psycopg2.extras import RealDictCursor
 
-from utils.schema_db_validation_management import refactor_content
+from utils.schema_db_validation_management import validate_dict, refactor_content
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,6 +18,14 @@ DB_NAME = os.getenv("DOCMOST_DB_NAME", "docmost")
 DB_USER = os.getenv("DOCMOST_DB_USER", "docmost")
 DB_PASS = os.getenv("DOCMOST_DB_PASSWORD", "STRONG_DB_PASSWORD")
 
+allowed_types = (
+    "content_single",
+    "content_multi",
+    "page_single",
+    "page_multi",
+    "space_single",
+    "space_multi",
+)
 
 def _conn():
     return psycopg2.connect(
@@ -131,7 +139,7 @@ def get_contents(
         pages_by_space: Optional[Dict[str, Any]] = None,
         *,
         space_id: Optional[str] = None,
-) -> Dict[str, Any]:
+) -> tuple[bool, dict[str, Any]] | tuple[bool, dict[Any, Any]]:
     """
     If pages_by_space is provided, fetch content for those page IDs.
     If not provided but space_id is provided, the function will:
@@ -145,14 +153,14 @@ def get_contents(
           page_id: {
             ...page meta...,
             "text_content": "...",
-            "content_updated_at": ...
+            "content_updated_at": ...,
           }
         }
       }
     """
     if not pages_by_space:
         if not space_id:
-            return {
+            return False, {
                 "error": "Missing input",
                 "message": "Provide pages_by_space or space_id",
                 "value": None,
@@ -160,15 +168,14 @@ def get_contents(
 
         spaces = get_spaces(space_id)
         if not spaces:
-            return {
-                "error": "Space not found",
-                "message": "No space returned for provided space_id",
-                "value": {"space_id": space_id},
+            logger.warning(f"No spaces found for {space_id}")
+            return False, {
+                "error": f"No spaces found for given space_id {space_id}",
+                "message": "Provide space_id",
+                "value": None,
             }
 
         pages_by_space = get_pages(spaces)
-        if "error" in pages_by_space:
-            return pages_by_space
 
     # Collect page IDs per space
     out: Dict[str, Any] = {}
@@ -223,9 +230,17 @@ def get_contents(
                     else:
                         out[sid][pid]["text_content"] = None
                         out[sid][pid]["content_updated_at"] = None
-
-    return out
-
+    # Before returning out, ensure the formatting of multi_pages_content are according to formatting expectations
+    this_type = allowed_types[allowed_types.index("content_multi")]
+    is_valid, is_valid_message = validate_dict(out, this_type)
+    if is_valid:
+        return True, out
+    else:
+        return False, {
+            "error": "Invalid multi_content structure",
+            "message": f"validate_dict has discarded the formatting as invalid {str(is_valid_message)}",
+            "value": f"{out}",
+        }
 
 # ---------------------------------------- #
 # ------ SPACES SPECIFIC FUNCTIONS ------- #
