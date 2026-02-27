@@ -13,9 +13,34 @@ get_single_page_content, refactor_content
 import logging
 logger = logging.getLogger(__name__)
 
+
 docmost_api = Blueprint("docmost_fetcher_api_route", __name__)
+
+# MODE
+MODE = os.getenv("MODE", "dev")
+
+# ROUTE ENVS
 SPACES_ALL_ENDPOINT = os.getenv("SPACES_ALL_ENDPOINT", "/docmost/api")
 
+
+if MODE == "prod":
+    # SCHEMA FILES ENVS PROD
+    #  Ensure base path contains trailing / always.
+    SCHEMA_BASE_PATH = os.getenv("SCHEMA_BASE_PATH", "./schemas/")
+else:
+    SCHEMA_BASE_PATH = os.getenv("SCHEMA_BASE_PATH_DEV", "../schemas/")
+
+
+# SCHEMA ENVS INDEPENDENT OF PROD AND DEV
+SINGLE_PAGE_CONTENT_SCHEMA_DICT = SCHEMA_BASE_PATH + os.getenv(
+    "SINGLE_PAGE_CONTENT_SCHEMA_FILE", "single_page_content.json"
+)
+SINGLE_PAGE_SCHEMA_DICT = SCHEMA_BASE_PATH + os.getenv(
+    "SINGLE_PAGE_SCHEMA_FILE", "single_page.json"
+)
+SINGLE_SPACE_SCHEMA_DICT = SCHEMA_BASE_PATH + os.getenv(
+    "SINGLE_SPACE_SCHEMA_FILE", "single_space.json"
+)
 
 
 ALLOWED_SCHEMA_TYPES = (
@@ -29,13 +54,14 @@ ALLOWED_SCHEMA_TYPES = (
 
 
 
+
 SCHEMAS = {
-    "content_single": CONTENT_SINGLE_SCHEMA_DICT,
-    "content_multi": CONTENT_MULTI_SCHEMA_DICT,
-    "page_single": PAGE_SINGLE_SCHEMA_DICT,
-    "page_multi": PAGE_MULTI_SCHEMA_DICT,
-    "space_single": SPACE_SINGLE_SCHEMA_DICT,
-    "space_multi": SPACE_MULTI_SCHEMA_DICT,
+    "content_single": SINGLE_PAGE_CONTENT_SCHEMA_DICT,
+    "content_multi": SINGLE_PAGE_CONTENT_SCHEMA_DICT,
+    "page_single": SINGLE_PAGE_SCHEMA_DICT,
+    "page_multi": SINGLE_PAGE_SCHEMA_DICT,
+    "space_single": SINGLE_SPACE_SCHEMA_DICT,
+    "space_multi": SINGLE_SPACE_SCHEMA_DICT,
 }
 
 # ---------------------------------------- #
@@ -103,3 +129,6 @@ def spaces():
 # ---------------------------------------- #
 # ------------- END OF ROUTES ------------ #
 # ---------------------------------------- #
+"""
+find . -type d \( -path ./.git -o -path ./log -o -path ./public -o -path ./tmp -o -path ./venv -o -path ./.idea \) -prune -o ! -type d -print
+"""
