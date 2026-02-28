@@ -4,8 +4,7 @@ from flask import Blueprint, request, jsonify
 import requests
 
 from db_functionality import (
-get_spaces, get_pages, get_contents, get_space_id_from_page_id,
-get_single_page_content, refactor_content
+get_spaces, get_pages, get_contents, get_page, get_space, get_content
 )
 
 import logging
@@ -55,7 +54,7 @@ def http_get_content_specific():
     }
     """
     page_id = request.args.get("page_id", "").strip()
-    content = get_single_page_content(page_id)
+    content = get_page(page_id)
 
 
 
