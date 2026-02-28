@@ -1,0 +1,12 @@
+{
+  "uuid": {
+    "uuid": {
+      "string1": "string",
+      "string2": "uuid",
+      "string3": "uuid",
+      "string4": "datetime",
+      "string5": "datetime",
+      "string6": "string"
+    }
+  }
+}
