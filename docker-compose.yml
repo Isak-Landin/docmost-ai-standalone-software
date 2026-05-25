@@ -22,8 +22,11 @@ services:
       DOCMOST_APP_URL: ${DOCMOST_APP_URL}
       DOCMOST_USER_EMAIL: ${DOCMOST_USER_EMAIL}
       DOCMOST_USER_PASSWORD: ${DOCMOST_USER_PASSWORD}
+      DOCMOST_REPLICA_ROOT_BASE: ${DOCMOST_REPLICA_ROOT_BASE:-/var/lib/docmost-mcp/replicas}
     ports:
       - "${EXTERNAL_PORT:-8099}:${LISTEN_PORT:-8099}"
+    volumes:
+      - docmost_mcp_replica_data:/var/lib/docmost-mcp/replicas
     networks:
       - docmost_network
 
@@ -35,3 +38,6 @@ networks:
   docmost_network:
     external: true
     name: ${DOCMOST_NETWORK_NAME:-docmost_default}
+
+volumes:
+  docmost_mcp_replica_data:

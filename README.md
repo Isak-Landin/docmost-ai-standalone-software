@@ -120,8 +120,11 @@ services:
       DOCMOST_APP_URL: ${DOCMOST_APP_URL}
       DOCMOST_USER_EMAIL: ${DOCMOST_USER_EMAIL}
       DOCMOST_USER_PASSWORD: ${DOCMOST_USER_PASSWORD}
+      DOCMOST_REPLICA_ROOT_BASE: ${DOCMOST_REPLICA_ROOT_BASE:-/var/lib/docmost-mcp/replicas}
     ports:
       - "${EXTERNAL_PORT:-8099}:${LISTEN_PORT:-8099}"
+    volumes:
+      - docmost_mcp_replica_data:/var/lib/docmost-mcp/replicas
     networks:
       - docmost_network
 
@@ -129,6 +132,9 @@ networks:
   docmost_network:
     external: true
     name: ${DOCMOST_NETWORK_NAME:-docmost_default}
+
+volumes:
+  docmost_mcp_replica_data:
 ```
 
 Then continue from [step 2](#2-confirm-the-shared-docker-network-name) below. Skip the build step - replace `docker compose up --build -d` with `docker compose up -d`.
@@ -223,15 +229,17 @@ Meaning:
 - `LISTEN_PORT`: port inside the container
 - `EXTERNAL_PORT`: port published on the server
 
-#### Optional server-side replica root
+#### Server-side replica root
 
-If you want replica files and sync metadata stored outside the project root, set:
+The bundled Docker Compose setup persists the server-side replica under `/var/lib/docmost-mcp/replicas`.
+
+If you want a different persistent location, set:
 
 ```env
 DOCMOST_REPLICA_ROOT_BASE=/path/on/the/server
 ```
 
-When unset, replica paths such as `./My-Space-replica/` are resolved relative to the project root.
+When unset outside the bundled Compose workflow, replica paths such as `./My-Space-replica/` are resolved relative to the project root. For real deployments, use a persistent bind mount or volume so replica state survives container recreates.
 
 #### Example full `.env`
 
@@ -254,7 +262,7 @@ LISTEN_PORT=8099
 EXTERNAL_PORT=8099
 
 MCP_ALLOWED_HOSTS=<YOUR_DOCMOST_MCP_HOSTNAME>
-DOCMOST_REPLICA_ROOT_BASE=
+DOCMOST_REPLICA_ROOT_BASE=/var/lib/docmost-mcp/replicas
 
 MODE=prod
 LOG_LEVEL=INFO
@@ -685,6 +693,16 @@ Check:
 2. the Copilot CLI machine can reach the host and port
 3. HTTPS or proxy settings are correct if the endpoint is remote
 4. the MCP config includes all intended tools (read + write)
+
+### MCP returns "Session not found" after a rebuild or restart
+
+`/mcp` uses streamable HTTP sessions. When the service process restarts, old session ids become invalid.
+
+Check:
+
+1. the service finished restarting cleanly
+2. the MCP client opened a fresh session after the restart instead of reusing the old one
+3. you retried from a new Copilot/MCP session if the previous one was connected before the rebuild
 
 ### Page lookup is confusing or keeps failing
 
