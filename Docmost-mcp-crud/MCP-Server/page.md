@@ -32,6 +32,7 @@ Controlled by the `MCP_ALLOWED_HOSTS` environment variable.
 | `get_replica_standards` | _(none)_ | Get local replica naming, layout, and sync rules |
 | `resolve_replica_directory_name` | `title`, `slug_id?`, `page_id?`, `existing_dir_names?` | Resolve the local directory name for a page title |
 | `get_replica_structure` | `space_id: UUID` | Get the deterministic local replica layout for a space |
+| `create_local_replica_page` | `space_id: UUID`, `title`, `content?`, `parent_page_id?`, `parent_local_path?` | Scaffold a local-only page in the server-side replica before any remote page exists |
 | `get_sync_status` | `space_id: UUID`, `include_synced?: bool` | Get server-side replica sync status for a space |
 | `get_sync_diff` | `space_id: UUID`, `page_id?: UUID`, `local_path?: str`, `include_synced?: bool` | Get line-based local-vs-remote diff hunks |
 | `pull_replica` | `space_id: UUID`, `page_ids?: UUID[]`, `local_paths?: str[]`, `force?: bool` | Pull remote Docmost content into the server-side replica |
@@ -66,6 +67,7 @@ The `FastMCP` instance includes a `SERVER_INSTRUCTIONS` string that guides MCP c
 - Start with `list_spaces` when you need to identify the correct space
 - Use `get_space_tree` for the full nested hierarchy
 - Use `get_replica_structure` for the deterministic local replica layout
+- Use `create_local_replica_page` for local-first page creation in the server-side replica
 - Pages are always space-scoped
 - All write tool IDs must originate from live tool responses - never inferred or invented
 - Prefer `update_page` over delete+create to preserve Docmost page history

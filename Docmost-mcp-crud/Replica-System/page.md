@@ -67,6 +67,7 @@ Applied level-by-level, not globally:
 ## Editing policy
 
 - Apply documentation edits to the **server-side replica**, not directly to remote Docmost
+- Use `create_local_replica_page` to scaffold brand-new local-only pages so the server, not the client, owns `_meta.json` creation
 - When local files are edited, use `get_sync_status` to report which replica files changed and which remote pages they correspond to
 - Use `push_replica` and `pull_replica` as the primary sync workflow, and only use `force` after reviewing clashes
 
@@ -75,7 +76,7 @@ Applied level-by-level, not globally:
 | When | Use |
 |---|---|
 | Building or refreshing an existing remote space locally | `get_replica_structure(space_id)` |
-| Creating a new local-only page not yet on remote | `get_replica_standards()` + `resolve_replica_directory_name(...)` |
+| Creating a new local-only page not yet on remote | `create_local_replica_page(space_id, ...)` |
 | Mapping a local file back to its remote page | Read `_meta.json` in the page directory |
 | Discovering which pages are out of sync | `get_sync_status(space_id)` |
 | Inspecting exact line-based clashes | `get_sync_diff(space_id, page_id?, local_path?)` |

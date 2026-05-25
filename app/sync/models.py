@@ -32,6 +32,7 @@ class ReplicaPageState(BaseModel):
     title: Optional[str] = None
     slug_id: Optional[str] = None
     parent_page_id: Optional[UUID] = None
+    parent_local_dir_path: Optional[str] = None
     local_dir_path: str
     content_file_path: str
     meta_file_path: str
@@ -47,6 +48,7 @@ class LocalReplicaScan:
     page_metas: list[ReplicaPageState] = field(default_factory=list)
     page_meta_by_id: dict[UUID, ReplicaPageState] = field(default_factory=dict)
     page_meta_by_content_path: dict[str, ReplicaPageState] = field(default_factory=dict)
+    page_meta_by_dir_path: dict[str, ReplicaPageState] = field(default_factory=dict)
     root_exists: bool = False
 
 

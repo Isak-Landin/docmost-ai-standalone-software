@@ -31,6 +31,7 @@ The REST API is served by FastAPI at the root of the service.
 | `DELETE` | `/spaces/{space_id}/pages/{page_id}` | `app/write/routers/pages.py` | Soft-delete a page |
 | `POST` | `/spaces/{space_id}/sync/pull` | `app/sync/routers.py` | Pull remote Docmost content into the server-side replica |
 | `POST` | `/spaces/{space_id}/sync/push` | `app/sync/routers.py` | Push server-side replica changes back to remote Docmost |
+| `POST` | `/spaces/{space_id}/sync/local-pages` | `app/sync/routers.py` | Scaffold a new local-only page in the server-side replica |
 
 ## Shared HTTP error codes
 
@@ -60,9 +61,10 @@ The sync API is status-first and one-way per operation:
 
 1. Call `GET /spaces/{space_id}/sync/status` first to classify each page as synced, local-ahead, remote-ahead, conflicting, local-only, or remote-only.
 2. Call `GET /spaces/{space_id}/sync/diff` before any force pull or force push decision.
-3. Call `POST /spaces/{space_id}/sync/pull` to materialize or refresh the server-side replica from remote Docmost.
-4. Call `POST /spaces/{space_id}/sync/push` to write server-side replica changes back to remote Docmost.
-5. Do not expect pull to auto-push first, or push to auto-pull first. Follow `recommended_next_action` when an operation is blocked.
+3. Call `POST /spaces/{space_id}/sync/local-pages` to scaffold a brand-new local-only page in the server-side replica before it exists on remote.
+4. Call `POST /spaces/{space_id}/sync/pull` to materialize or refresh the server-side replica from remote Docmost.
+5. Call `POST /spaces/{space_id}/sync/push` to write server-side replica changes back to remote Docmost.
+6. Do not expect pull to auto-push first, or push to auto-pull first. Follow `recommended_next_action` when an operation is blocked.
 
 Both `POST /spaces/{space_id}/sync/pull` and `POST /spaces/{space_id}/sync/push` accept the same JSON body:
 

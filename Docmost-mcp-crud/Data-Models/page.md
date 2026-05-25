@@ -142,6 +142,36 @@ Returned by `get_replica_structure`.
 | `root_pages` | list[ReplicaTreeNode] | Root-level replica nodes |
 | `orphan_pages` | list[ReplicaTreeNode] | Orphan replica nodes |
 
+## LocalReplicaPageCreateIn
+
+Used by `create_local_replica_page`.
+
+| Field | Type | Description |
+|---|---|---|
+| `title` | str | Title for the new local-only page |
+| `content` | str | Initial markdown content written to `page.md` |
+| `parent_page_id` | UUID? | Optional remote parent page UUID |
+| `parent_local_path` | str? | Optional parent local content-file path or page directory path for nesting under an existing local-only page |
+
+## LocalReplicaPageOut
+
+Returned by `create_local_replica_page`.
+
+Key fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `replica_root` | str | Replica root relative to the configured base |
+| `title` | str | Title of the scaffolded page |
+| `parent_page_id` | UUID? | Resolved remote parent page UUID when already known |
+| `parent_local_path` | str? | Resolved parent local directory path when nested |
+| `local_dir_path` | str | Local directory for the new page |
+| `content_file_path` | str | Path to the new `page.md` |
+| `meta_file_path` | str | Path to the new `_meta.json` |
+| `sync_state` | literal | Always `local_only_page` for a newly scaffolded local page |
+| `recommended_next_action` | literal | Always `push_replica` once local edits are ready |
+| `naming` | ReplicaNameResolutionOut | Naming decision used for the new directory |
+
 ## SyncSelectionIn
 
 Used by `pull_replica` and `push_replica` to target all pages or a subset.

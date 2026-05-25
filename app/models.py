@@ -176,6 +176,44 @@ class ReplicaStructureOut(BaseModel):
 ReplicaTreeNode.model_rebuild()
 
 
+class LocalReplicaPageCreateIn(BaseModel):
+    title: str = Field(description="Page title for the new local-only replica page.")
+    content: str = Field(
+        default="",
+        description="Initial markdown content for the new local-only replica page. Leave empty to scaffold a blank page.",
+    )
+    parent_page_id: Optional[UUID] = Field(
+        None,
+        description="Optional remote parent page UUID for nesting under an existing remote page.",
+    )
+    parent_local_path: Optional[str] = Field(
+        None,
+        description=(
+            "Optional existing local replica path for the parent page when nesting under a local-only page or a materialized page. "
+            "Accepts the parent's content file path or page directory path."
+        ),
+    )
+
+
+class LocalReplicaPageOut(BaseModel):
+    space: SpaceSummaryOut
+    replica_root: str = Field(description="Replica root path relative to the configured replica root base.")
+    replica_root_abs_path: str = Field(description="Absolute server-side path to the space replica root.")
+    title: str = Field(description="Title of the newly scaffolded local-only page.")
+    parent_page_id: Optional[UUID] = Field(None, description="Resolved remote parent page UUID when one is already known.")
+    parent_local_path: Optional[str] = Field(None, description="Resolved local replica directory path for the parent page when nested.")
+    local_dir_path: str = Field(description="Local replica directory path for the new page.")
+    local_dir_abs_path: str = Field(description="Absolute server-side path to the new page directory.")
+    content_file_path: str = Field(description="Local replica content file path for the new page.")
+    content_file_abs_path: str = Field(description="Absolute server-side path to the new page content file.")
+    meta_file_path: str = Field(description="Local replica metadata file path for the new page.")
+    meta_file_abs_path: str = Field(description="Absolute server-side path to the new page metadata file.")
+    sync_state: Literal["local_only_page"] = Field(description="Initial sync state for a newly scaffolded local-only page.")
+    recommended_next_action: Literal["push_replica"] = Field(description="Recommended next sync action after the page is edited locally.")
+    naming: ReplicaNameResolutionOut = Field(description="Resolved naming decision used for the new local page directory.")
+    message: str = Field(description="Human-readable explanation of the scaffolded local-only page.")
+
+
 # ---------------------------------------------------------------------------
 # Write request models
 # ---------------------------------------------------------------------------

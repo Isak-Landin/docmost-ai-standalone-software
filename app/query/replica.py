@@ -61,7 +61,7 @@ def get_replica_standards() -> ReplicaStandardsOut:
         replica_meta_file_name=REPLICA_META_FILE_NAME,
         tree_cache_file_name=TREE_CACHE_FILE_NAME,
         initial_replica_source_rule="Use `get_replica_structure(space_id)` to build or refresh the initial local replica for an existing remote space.",
-        local_addition_source_rule="Use `get_replica_standards()` plus `resolve_replica_directory_name(...)` when creating a new local-only page directory that does not yet exist on remote.",
+        local_addition_source_rule="Use `create_local_replica_page(space_id, ...)` to scaffold a new local-only page in the server-side replica. Use `resolve_replica_directory_name(...)` only when you need to inspect or verify naming behavior.",
         local_replica_requirement="Maintain a server-side replica at `./{space_name}-replica/` so multiple sessions can compare, diff, pull, and push against the same remote Docmost space.",
         read_source_policy="Read remote Docmost first when there is no newer local replica state.",
         local_edit_policy="Apply requested documentation edits to the server-side replica, keep canonical replica descriptors in `_replica.json`, `_tree.json`, and `_meta.json`, and keep sync bookkeeping in separate `_sync.json` files controlled by the sync engine.",

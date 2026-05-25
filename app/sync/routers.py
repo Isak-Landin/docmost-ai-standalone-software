@@ -5,8 +5,15 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 
-from app.models import SpaceSyncDiffOut, SpaceSyncStatusOut, SyncOperationOut, SyncSelectionIn
-from app.sync.service import get_sync_diff, get_sync_status, pull_replica, push_replica
+from app.models import (
+    LocalReplicaPageCreateIn,
+    LocalReplicaPageOut,
+    SpaceSyncDiffOut,
+    SpaceSyncStatusOut,
+    SyncOperationOut,
+    SyncSelectionIn,
+)
+from app.sync.service import create_local_replica_page, get_sync_diff, get_sync_status, pull_replica, push_replica
 
 router = APIRouter(prefix="/spaces/{space_id}/sync", tags=["sync"])
 
@@ -45,6 +52,22 @@ def sync_diff(
 ):
     try:
         return get_sync_diff(space_id, page_id=page_id, local_path=local_path, include_synced=include_synced)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post(
+    "/local-pages",
+    response_model=LocalReplicaPageOut,
+    summary="Scaffold a new local-only page in the server-side replica",
+    description=(
+        "Creates a canonical local-only page directory, page.md, and _meta.json inside the server-side replica so "
+        "local-first documentation work can begin before any remote Docmost page exists."
+    ),
+)
+def create_local_sync_page(space_id: UUID, body: LocalReplicaPageCreateIn):
+    try:
+        return create_local_replica_page(space_id, body)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

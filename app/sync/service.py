@@ -6,6 +6,8 @@ from typing import Iterable, Optional
 from uuid import UUID
 
 from app.models import (
+    LocalReplicaPageCreateIn,
+    LocalReplicaPageOut,
     PageSyncDiffOut,
     PageSyncStatusOut,
     SpaceSummaryOut,
@@ -18,9 +20,9 @@ from app.models import (
 )
 from app.query.docmost import get_page as fetch_page
 from app.query.docmost import list_pages as fetch_pages
-from app.query.replica import get_replica_structure
+from app.query.replica import get_replica_structure, resolve_replica_directory_name
 from app.sync.diffing import build_diff_hunks, canonicalize_content, content_hash
-from app.sync.models import ReplicaPageState
+from app.sync.models import LocalReplicaScan, ReplicaPageState
 from app.sync.storage import (
     flatten_replica_nodes,
     get_local_replica_paths,
@@ -53,6 +55,13 @@ class SyncContext:
     replica_root_abs_path: str
     replica_exists: bool
     page_contexts: list[SyncPageContext]
+
+
+@dataclass
+class LocalReplicaParentContext:
+    parent_page_id: UUID | None
+    parent_local_dir_path: str | None
+    parent_dir_path: str
 
 
 def get_sync_status(space_id: UUID, *, include_synced: bool = False) -> SpaceSyncStatusOut:
@@ -99,6 +108,76 @@ def get_sync_diff(
         replica_root_abs_path=context.replica_root_abs_path,
         generated_at=_utcnow(),
         pages=diff_pages,
+    )
+
+
+def create_local_replica_page(space_id: UUID, request: LocalReplicaPageCreateIn) -> LocalReplicaPageOut:
+    if request.parent_page_id is not None and request.parent_local_path:
+        raise ValueError("Pass either parent_page_id or parent_local_path, not both.")
+
+    replica_structure = get_replica_structure(space_id)
+    write_replica_state(replica_structure)
+    local_scan = scan_local_replica(replica_structure)
+    parent_context = _resolve_parent_context(
+        replica_structure=replica_structure,
+        local_scan=local_scan,
+        parent_page_id=request.parent_page_id,
+        parent_local_path=request.parent_local_path,
+    )
+
+    existing_dir_names = _existing_sibling_dir_names(
+        replica_structure=replica_structure,
+        local_scan=local_scan,
+        parent_context=parent_context,
+    )
+    naming = resolve_replica_directory_name(
+        title=request.title,
+        existing_dir_names=sorted(existing_dir_names),
+    )
+
+    local_dir_path = f"{parent_context.parent_dir_path.rstrip('/')}/{naming.local_dir_name}"
+    content_file_path = f"{local_dir_path}/page.md"
+    meta_file_path = f"{local_dir_path}/_meta.json"
+    content_abs_path = _logical_to_abs_string(content_file_path)
+    meta_abs_path = _logical_to_abs_string(meta_file_path)
+    if content_abs_path is None or meta_abs_path is None:
+        raise ValueError("Could not resolve local replica paths for the new page.")
+
+    from app.sync.config import logical_path_to_absolute
+
+    if logical_path_to_absolute(content_file_path).exists() or logical_path_to_absolute(meta_file_path).exists():
+        raise ValueError(f"Local replica page already exists at {local_dir_path}.")
+
+    write_content_file(content_file_path, request.content)
+    page_state = ReplicaPageState(
+        page_id=None,
+        space_id=space_id,
+        title=request.title,
+        parent_page_id=parent_context.parent_page_id,
+        parent_local_dir_path=parent_context.parent_local_dir_path,
+        local_dir_path=local_dir_path,
+        content_file_path=content_file_path,
+        meta_file_path=meta_file_path,
+    )
+    write_page_state(page_state)
+
+    return LocalReplicaPageOut(
+        space=replica_structure.space,
+        replica_root=replica_structure.replica_root,
+        replica_root_abs_path=str(get_local_replica_paths(replica_structure).root_path),
+        title=request.title,
+        parent_page_id=parent_context.parent_page_id,
+        parent_local_path=parent_context.parent_local_dir_path,
+        local_dir_path=local_dir_path,
+        local_dir_abs_path=str(logical_path_to_absolute(local_dir_path)),
+        content_file_path=content_file_path,
+        content_file_abs_path=content_abs_path,
+        meta_file_path=meta_file_path,
+        meta_file_abs_path=meta_abs_path,
+        sync_state="local_only_page",
+        recommended_next_action="push_replica",
+        naming=naming,
+        message="Local-only page scaffolded in the server-side replica. Edit page.md locally, then push_replica when ready.",
     )
 
 
@@ -193,6 +272,7 @@ def pull_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> Sy
 def push_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> SyncOperationOut:
     selection = selection or SyncSelectionIn()
     context = _build_sync_context(space_id)
+    current_local_scan = scan_local_replica(get_replica_structure(space_id))
     selected = _select_page_contexts(context.page_contexts, page_ids=selection.page_ids, local_paths=selection.local_paths)
     if not selected:
         selected = context.page_contexts
@@ -240,12 +320,24 @@ def push_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> Sy
                 results.append(_skip_result(page_context, "push_skipped", "Local-only page is missing metadata or content.", conflict_hunks, recommended_next_action="get_sync_diff"))
                 continue
 
+            parent_page_id = _resolve_local_only_parent_page_id(page_context.meta, current_local_scan)
+            if page_context.meta.parent_local_dir_path and parent_page_id is None:
+                results.append(
+                    _skip_result(
+                        page_context,
+                        "push_skipped",
+                        "Parent local-only page has not been pushed yet. Push the parent first or include it in the same push so the hierarchy can be preserved.",
+                        recommended_next_action="push_replica",
+                    )
+                )
+                continue
+
             normalized_local_text = canonicalize_content(page_context.local_text)
             response = create_remote_page(
                 space_id=str(space_id),
                 title=page_context.meta.title,
                 content=normalized_local_text,
-                parent_page_id=str(page_context.meta.parent_page_id) if page_context.meta.parent_page_id else None,
+                parent_page_id=str(parent_page_id) if parent_page_id else None,
             )
             remote_page = response.get("page", response)
             updated_meta = page_context.meta.model_copy(
@@ -257,9 +349,14 @@ def push_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> Sy
                     "last_sync_at": _utcnow(),
                     "last_sync_remote_updated_at": _coerce_datetime(remote_page.get("updatedAt") or remote_page.get("updated_at")),
                     "last_sync_title": remote_page.get("title") or page_context.meta.title,
+                    "parent_page_id": parent_page_id,
                 }
             )
             write_page_state(updated_meta)
+            current_local_scan.page_meta_by_content_path[updated_meta.content_file_path] = updated_meta
+            current_local_scan.page_meta_by_dir_path[updated_meta.local_dir_path] = updated_meta
+            if updated_meta.page_id is not None:
+                current_local_scan.page_meta_by_id[updated_meta.page_id] = updated_meta
             any_applied = True
             results.append(_applied_result(page_context, "created_remote", "Local-only page created remotely and linked to the replica."))
             continue
@@ -687,3 +784,108 @@ def _recommendation_for_state(sync_state: str) -> tuple[str, list[str]]:
         "local_missing": ("pull_replica", ["pull_replica"]),
     }
     return mapping[sync_state]
+
+
+def _resolve_parent_context(
+    *,
+    replica_structure,
+    local_scan: LocalReplicaScan,
+    parent_page_id: UUID | None,
+    parent_local_path: str | None,
+) -> LocalReplicaParentContext:
+    replica_root = replica_structure.replica_root
+    if parent_page_id is None and not parent_local_path:
+        return LocalReplicaParentContext(
+            parent_page_id=None,
+            parent_local_dir_path=None,
+            parent_dir_path=replica_root,
+        )
+
+    if parent_page_id is not None:
+        remote_nodes = flatten_replica_nodes(replica_structure)
+        parent_node = remote_nodes.get(parent_page_id)
+        if parent_node is None:
+            raise ValueError(f"Parent page {parent_page_id} does not exist in the current remote space tree.")
+        parent_meta = local_scan.page_meta_by_id.get(parent_page_id)
+        parent_dir_path = parent_meta.local_dir_path if parent_meta else parent_node.local_dir_path
+        return LocalReplicaParentContext(
+            parent_page_id=parent_page_id,
+            parent_local_dir_path=parent_dir_path,
+            parent_dir_path=parent_dir_path,
+        )
+
+    parent_meta = _resolve_parent_meta_by_path(local_scan, parent_local_path or "")
+    if parent_meta is None:
+        raise ValueError("parent_local_path does not match an existing local replica page.")
+    return LocalReplicaParentContext(
+        parent_page_id=parent_meta.page_id,
+        parent_local_dir_path=parent_meta.local_dir_path,
+        parent_dir_path=parent_meta.local_dir_path,
+    )
+
+
+def _existing_sibling_dir_names(
+    *,
+    replica_structure,
+    local_scan: LocalReplicaScan,
+    parent_context: LocalReplicaParentContext,
+) -> set[str]:
+    sibling_dir_names: set[str] = set()
+    if parent_context.parent_page_id is None and parent_context.parent_local_dir_path is None:
+        sibling_dir_names.update(node.local_dir_name for node in replica_structure.root_pages + replica_structure.orphan_pages)
+    elif parent_context.parent_page_id is not None:
+        remote_nodes = flatten_replica_nodes(replica_structure)
+        parent_node = remote_nodes.get(parent_context.parent_page_id)
+        if parent_node is not None:
+            sibling_dir_names.update(child.local_dir_name for child in parent_node.children)
+
+    parent_dir_abs_path = _logical_to_abs_string(parent_context.parent_dir_path)
+    if parent_dir_abs_path:
+        from pathlib import Path
+
+        parent_dir = Path(parent_dir_abs_path)
+        if parent_dir.exists():
+            for child in sorted(parent_dir.iterdir()):
+                if child.is_dir():
+                    sibling_dir_names.add(child.name)
+
+    return sibling_dir_names
+
+
+def _resolve_parent_meta_by_path(local_scan: LocalReplicaScan, candidate: str) -> ReplicaPageState | None:
+    normalized = candidate.strip()
+    if not normalized:
+        return None
+
+    for logical_path, meta in local_scan.page_meta_by_content_path.items():
+        if _matches_logical_path(logical_path, normalized):
+            return meta
+    for logical_path, meta in local_scan.page_meta_by_dir_path.items():
+        if _matches_logical_path(logical_path, normalized):
+            return meta
+    return None
+
+
+def _matches_logical_path(stored_path: str, candidate: str) -> bool:
+    if not stored_path:
+        return False
+    options = {stored_path}
+    abs_path = _logical_to_abs_string(stored_path)
+    if abs_path:
+        options.add(abs_path)
+    stripped_candidate = candidate[2:] if candidate.startswith("./") else candidate
+    for option in options:
+        if option == candidate:
+            return True
+        if option.startswith("./") and option[2:] == stripped_candidate:
+            return True
+    return False
+
+
+def _resolve_local_only_parent_page_id(meta: ReplicaPageState, local_scan: LocalReplicaScan) -> UUID | None:
+    if meta.parent_page_id is not None:
+        return meta.parent_page_id
+    if not meta.parent_local_dir_path:
+        return None
+    parent_meta = local_scan.page_meta_by_dir_path.get(meta.parent_local_dir_path)
+    return parent_meta.page_id if parent_meta is not None else None

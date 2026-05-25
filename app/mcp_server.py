@@ -19,6 +19,8 @@ from app.query.docmost import (
 )
 from app.models import (
     DeletedOut,
+    LocalReplicaPageCreateIn,
+    LocalReplicaPageOut,
     PageCreateIn,
     PageOut,
     PageUpdateIn,
@@ -44,6 +46,7 @@ from app.query.replica import (
     resolve_replica_directory_name as resolve_replica_directory_name_impl,
 )
 from app.sync.service import (
+    create_local_replica_page as run_create_local_replica_page,
     get_sync_diff as fetch_sync_diff,
     get_sync_status as fetch_sync_status,
     pull_replica as run_pull_replica,
@@ -98,7 +101,8 @@ Resolve by calling the appropriate read tool (list_spaces, list_pages) to obtain
 Maintain or create a server-side replica at `./{space_name}-replica/` when the client workflow allows it.
 All local replica directory and file names must not contain spaces — replace with hyphens.
 Use get_replica_structure for the initial local replica layout.
-Use get_replica_standards and resolve_replica_directory_name for local-only additions.
+Use create_local_replica_page to scaffold a new local-only page in the server-side replica before editing it.
+Use get_replica_standards and resolve_replica_directory_name to inspect or verify naming behavior when needed, not to hand-write `_meta.json`.
 Keep canonical replica descriptors in `_replica.json`, `_tree.json`, and per-page `_meta.json`.
 Keep server-side sync bookkeeping in separate `_sync.json` files rather than redefining the replica shape.
 The server owns canonical structure, metadata paths, and comparison normalization.
@@ -195,6 +199,29 @@ def get_replica_structure(space_id: UUID) -> ReplicaStructureOut:
     except DocmostConnectionError as exc:
         raise ToolError(str(exc)) from exc
     except SpaceNotFoundError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+@mcp.tool()
+def create_local_replica_page(
+    space_id: UUID,
+    title: str,
+    content: str = "",
+    parent_page_id: UUID | None = None,
+    parent_local_path: str = "",
+) -> LocalReplicaPageOut:
+    """Scaffold a new local-only page in the server-side replica before pushing it to remote Docmost."""
+    try:
+        return run_create_local_replica_page(
+            space_id,
+            LocalReplicaPageCreateIn(
+                title=title,
+                content=content,
+                parent_page_id=parent_page_id,
+                parent_local_path=parent_local_path or None,
+            ),
+        )
+    except Exception as exc:
         raise ToolError(str(exc)) from exc
 
 

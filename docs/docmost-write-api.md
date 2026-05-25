@@ -215,10 +215,11 @@ right after writing, add a short wait or read from the REST response instead.
 For our use case (syncing the server-side replica -> remote Docmost), these endpoints are the
 low-level building blocks used by the higher-level sync workflow:
 
-1. use replica status/diff tooling to determine whether the page is local-only, remote-only, or conflicting
-2. call `POST /api/pages/create` when a local-only replica page needs to become a new remote page
-3. retain the returned `id` for future `POST /api/pages/update` calls when the page already exists remotely
-4. only bypass the higher-level sync workflow when you intentionally need direct per-page control
+1. use `POST /spaces/{space_id}/sync/local-pages` to scaffold a brand-new local-only page in the server-side replica
+2. use replica status/diff tooling to determine whether the page is local-only, remote-only, or conflicting
+3. let `push_replica` call `POST /api/pages/create` when a local-only replica page needs to become a new remote page
+4. retain the returned `id` for future `POST /api/pages/update` calls when the page already exists remotely
+5. only bypass the higher-level sync workflow when you intentionally need direct per-page control
 
 ---
 

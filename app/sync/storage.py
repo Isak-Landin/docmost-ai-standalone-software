@@ -35,6 +35,7 @@ def scan_local_replica(replica_structure: ReplicaStructureOut) -> LocalReplicaSc
     page_metas: list[ReplicaPageState] = []
     page_meta_by_id: dict[UUID, ReplicaPageState] = {}
     page_meta_by_content_path: dict[str, ReplicaPageState] = {}
+    page_meta_by_dir_path: dict[str, ReplicaPageState] = {}
 
     if paths.root_path.exists():
         for meta_path in sorted(paths.root_path.rglob(replica_structure.standards.page_meta_file_name)):
@@ -43,12 +44,14 @@ def scan_local_replica(replica_structure: ReplicaStructureOut) -> LocalReplicaSc
             if page_state.page_id is not None:
                 page_meta_by_id[page_state.page_id] = page_state
             page_meta_by_content_path[page_state.content_file_path] = page_state
+            page_meta_by_dir_path[page_state.local_dir_path] = page_state
 
     return LocalReplicaScan(
         replica_state=replica_state,
         page_metas=page_metas,
         page_meta_by_id=page_meta_by_id,
         page_meta_by_content_path=page_meta_by_content_path,
+        page_meta_by_dir_path=page_meta_by_dir_path,
         root_exists=paths.root_path.exists(),
     )
 
@@ -103,6 +106,7 @@ def write_remote_page_snapshot(
         title=title,
         slug_id=slug_id,
         parent_page_id=parent_page_id,
+        parent_local_dir_path=_parent_local_dir_path(replica_structure.replica_root, node.local_dir_path),
         local_dir_path=node.local_dir_path,
         content_file_path=node.content_file_path,
         meta_file_path=node.meta_file_path,
@@ -180,6 +184,7 @@ def _read_page_state(path: Path) -> ReplicaPageState:
         title=meta_payload.get("title"),
         slug_id=meta_payload.get("slug_id"),
         parent_page_id=meta_payload.get("parent_page_id"),
+        parent_local_dir_path=meta_payload.get("parent_local_dir_path"),
         local_dir_path=absolute_path_to_logical(path.parent),
         content_file_path=content_file_path,
         meta_file_path=meta_file_path,
@@ -244,6 +249,7 @@ def _canonical_page_meta(page_state: ReplicaPageState) -> dict[str, Any]:
         "title": page_state.title,
         "slug_id": page_state.slug_id,
         "parent_page_id": page_state.parent_page_id,
+        "parent_local_dir_path": page_state.parent_local_dir_path,
         "space_id": page_state.space_id,
         "content_file_path": page_state.content_file_path,
         "meta_file_path": page_state.meta_file_path,
@@ -290,3 +296,10 @@ def _json_default(value: Any) -> str:
     if isinstance(value, UUID):
         return str(value)
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _parent_local_dir_path(replica_root: str, local_dir_path: str) -> str | None:
+    if local_dir_path == replica_root:
+        return None
+    parent_path = local_dir_path.rsplit("/", 1)[0]
+    return None if parent_path == replica_root else parent_path
