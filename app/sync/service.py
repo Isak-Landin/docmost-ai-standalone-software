@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterable, Optional
 from uuid import UUID
 
@@ -67,7 +67,7 @@ def get_sync_status(space_id: UUID, *, include_synced: bool = False) -> SpaceSyn
         replica_root=context.replica_root,
         replica_root_abs_path=context.replica_root_abs_path,
         replica_exists=context.replica_exists,
-        generated_at=datetime.utcnow(),
+        generated_at=_utcnow(),
         pipeline_expectations=_pipeline_expectations(),
         counts=_count_statuses([page_context.status for page_context in context.page_contexts]),
         pages=page_statuses,
@@ -97,7 +97,7 @@ def get_sync_diff(
         space=context.space,
         replica_root=context.replica_root,
         replica_root_abs_path=context.replica_root_abs_path,
-        generated_at=datetime.utcnow(),
+        generated_at=_utcnow(),
         pages=diff_pages,
     )
 
@@ -132,7 +132,7 @@ def pull_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> Sy
                         "slug_id": getattr(remote_page, "slug_id", None) or page_context.meta.slug_id,
                         "parent_page_id": getattr(remote_page, "parent_page_id", None) or page_context.meta.parent_page_id,
                         "base_content_hash": content_hash(page_context.remote_text),
-                        "last_sync_at": datetime.utcnow(),
+                        "last_sync_at": _utcnow(),
                         "last_sync_remote_updated_at": getattr(remote_page, "updated_at", None),
                         "last_sync_title": getattr(remote_page, "title", None) or page_context.meta.title,
                     }
@@ -223,7 +223,7 @@ def push_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> Sy
                     "title": remote_page.get("title") or page_context.meta.title,
                     "slug_id": remote_page.get("slugId") or remote_page.get("slug_id") or page_context.meta.slug_id,
                     "base_content_hash": content_hash(normalized_local_text),
-                    "last_sync_at": datetime.utcnow(),
+                    "last_sync_at": _utcnow(),
                     "last_sync_remote_updated_at": _coerce_datetime(remote_page.get("updatedAt") or remote_page.get("updated_at")),
                     "last_sync_title": remote_page.get("title") or page_context.meta.title,
                 }
@@ -254,7 +254,7 @@ def push_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> Sy
                     "title": remote_page.get("title") or page_context.meta.title,
                     "slug_id": remote_page.get("slugId") or remote_page.get("slug_id") or page_context.meta.slug_id,
                     "base_content_hash": content_hash(normalized_local_text),
-                    "last_sync_at": datetime.utcnow(),
+                    "last_sync_at": _utcnow(),
                     "last_sync_remote_updated_at": _coerce_datetime(remote_page.get("updatedAt") or remote_page.get("updated_at")),
                     "last_sync_title": remote_page.get("title") or page_context.meta.title,
                 }
@@ -620,7 +620,7 @@ def _build_operation_out(
         replica_root=context.replica_root,
         replica_root_abs_path=context.replica_root_abs_path,
         force=force,
-        generated_at=datetime.utcnow(),
+        generated_at=_utcnow(),
         applied_count=sum(1 for result in results if result.applied),
         skipped_count=sum(1 for result in results if not result.applied and result.action != "conflict"),
         conflict_count=sum(1 for result in results if result.action == "conflict"),
@@ -632,7 +632,7 @@ def _refresh_replica_state(space_id: UUID, *, operation: str, write_state: bool)
     if not write_state and operation != "pull":
         return
     replica_structure = get_replica_structure(space_id)
-    now = datetime.utcnow()
+    now = _utcnow()
     if operation == "pull":
         write_replica_state(replica_structure, last_pulled_at=now)
     else:
@@ -651,11 +651,16 @@ def _coerce_datetime(value: object) -> Optional[datetime]:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
     if isinstance(value, str):
         normalized = value.replace("Z", "+00:00")
-        return datetime.fromisoformat(normalized)
+        parsed = datetime.fromisoformat(normalized)
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
     return None
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _pipeline_expectations() -> list[str]:

@@ -78,7 +78,7 @@ def _raise_for_docmost_error(exc: Exception) -> None:
 
 def _map_space(data: dict) -> SpaceOut:
     """Map a Docmost space response dict to SpaceOut."""
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     return SpaceOut(
         id=data["id"],
@@ -89,6 +89,6 @@ def _map_space(data: dict) -> SpaceOut:
         default_role=data.get("defaultRole", "writer"),
         creator_id=data.get("creatorId"),
         workspace_id=data["workspaceId"],
-        created_at=data.get("createdAt") or datetime.utcnow(),
-        updated_at=data.get("updatedAt") or datetime.utcnow(),
+        created_at=data.get("createdAt") or datetime.now(timezone.utc),
+        updated_at=data.get("updatedAt") or datetime.now(timezone.utc),
     )

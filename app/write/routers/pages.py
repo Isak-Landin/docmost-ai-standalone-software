@@ -128,7 +128,7 @@ def _raise_for_docmost_error(exc: Exception) -> None:
 
 def _map_page_meta(page: dict) -> PageMetaOut:
     """Map a Docmost page response dict to PageMetaOut (no content)."""
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     return PageMetaOut(
         id=page["id"],
@@ -142,6 +142,6 @@ def _map_page_meta(page: dict) -> PageMetaOut:
         space_id=page.get("spaceId") or page.get("space_id"),
         workspace_id=page.get("workspaceId") or page.get("workspace_id"),
         is_locked=page.get("isLocked") or page.get("is_locked") or False,
-        created_at=page.get("createdAt") or page.get("created_at") or datetime.utcnow(),
-        updated_at=page.get("updatedAt") or page.get("updated_at") or datetime.utcnow(),
+        created_at=page.get("createdAt") or page.get("created_at") or datetime.now(timezone.utc),
+        updated_at=page.get("updatedAt") or page.get("updated_at") or datetime.now(timezone.utc),
     )

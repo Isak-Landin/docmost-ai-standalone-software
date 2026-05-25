@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -77,7 +77,7 @@ def write_replica_state(
         replica_root=replica_structure.replica_root,
         last_pulled_at=last_pulled_at if last_pulled_at is not None else (existing.last_pulled_at if existing else None),
         last_pushed_at=last_pushed_at if last_pushed_at is not None else (existing.last_pushed_at if existing else None),
-        updated_at=datetime.utcnow(),
+        updated_at=_utcnow(),
     )
     _write_json(paths.replica_meta_path, _canonical_replica_meta(replica_structure))
     _write_json(paths.replica_sync_path, _canonical_replica_sync(state))
@@ -107,7 +107,7 @@ def write_remote_page_snapshot(
         content_file_path=node.content_file_path,
         meta_file_path=node.meta_file_path,
         base_content_hash=base_content_hash,
-        last_sync_at=datetime.utcnow(),
+        last_sync_at=_utcnow(),
         last_sync_remote_updated_at=remote_updated_at,
         last_sync_title=title,
     )
@@ -154,7 +154,7 @@ def _read_replica_state(meta_path: Path, sync_path: Path) -> ReplicaSpaceState |
         replica_root=meta_payload.get("replica_root") or meta_payload.get("replicaRoot") or "",
         last_pulled_at=_coerce_datetime(sync_payload.get("last_pulled_at") or meta_payload.get("last_pulled_at")),
         last_pushed_at=_coerce_datetime(sync_payload.get("last_pushed_at") or meta_payload.get("last_pushed_at")),
-        updated_at=_coerce_datetime(sync_payload.get("updated_at") or meta_payload.get("updated_at")) or datetime.utcnow(),
+        updated_at=_coerce_datetime(sync_payload.get("updated_at") or meta_payload.get("updated_at")) or _utcnow(),
     )
 
 
@@ -268,10 +268,15 @@ def _coerce_datetime(value: Any) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
     if isinstance(value, str):
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
     return None
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
