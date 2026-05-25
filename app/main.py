@@ -35,8 +35,8 @@ app.include_router(pages.router)
 # Write routes — backed by Docmost REST API
 app.include_router(write_spaces.router)
 app.include_router(write_pages.router)
-# Streamable HTTP MCP is served at /mcp so REST routes stay at root and Copilot can use /mcp.
-app.mount("/mcp", mcp.streamable_http_app())
+# FastMCP already exposes /mcp inside the sub-app, so mount it at root.
+app.mount("/", mcp.streamable_http_app())
 
 
 if __name__ == "__main__":
