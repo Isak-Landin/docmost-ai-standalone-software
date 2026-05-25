@@ -7,6 +7,11 @@ from difflib import SequenceMatcher
 from app.models import SyncDiffHunkOut
 
 
+def canonicalize_title(text: str | None) -> str:
+    normalized = (text or "").strip()
+    return unicodedata.normalize("NFC", normalized)
+
+
 def canonicalize_content(text: str | None) -> str:
     normalized = (text or "").lstrip("\ufeff")
     normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
@@ -17,6 +22,13 @@ def canonicalize_content(text: str | None) -> str:
 def content_hash(text: str | None) -> str:
     normalized = canonicalize_content(text)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def revision_hash(title: str | None, text: str | None) -> str:
+    normalized_title = canonicalize_title(title)
+    normalized_content = canonicalize_content(text)
+    payload = f"{normalized_title}\n---\n{normalized_content}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def build_diff_hunks(local_text: str | None, remote_text: str | None) -> list[SyncDiffHunkOut]:

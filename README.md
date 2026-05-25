@@ -122,11 +122,8 @@ services:
       DOCMOST_APP_URL: ${DOCMOST_APP_URL}
       DOCMOST_USER_EMAIL: ${DOCMOST_USER_EMAIL}
       DOCMOST_USER_PASSWORD: ${DOCMOST_USER_PASSWORD}
-      DOCMOST_REPLICA_ROOT_BASE: ${DOCMOST_REPLICA_ROOT_BASE:-/var/lib/docmost-mcp/replicas}
     ports:
       - "${EXTERNAL_PORT:-8099}:${LISTEN_PORT:-8099}"
-    volumes:
-      - docmost_mcp_replica_data:/var/lib/docmost-mcp/replicas
     networks:
       - docmost_network
 
@@ -134,9 +131,6 @@ networks:
   docmost_network:
     external: true
     name: ${DOCMOST_NETWORK_NAME:-docmost_default}
-
-volumes:
-  docmost_mcp_replica_data:
 ```
 
 Then continue from [step 2](#2-confirm-the-shared-docker-network-name) below. Skip the build step - replace `docker compose up --build -d` with `docker compose up -d`.
@@ -231,18 +225,6 @@ Meaning:
 - `LISTEN_PORT`: port inside the container
 - `EXTERNAL_PORT`: port published on the server
 
-#### Server-side replica root
-
-The bundled Docker Compose setup persists the server-side replica under `/var/lib/docmost-mcp/replicas`.
-
-If you want a different persistent location, set:
-
-```env
-DOCMOST_REPLICA_ROOT_BASE=/path/on/the/server
-```
-
-When unset outside the bundled Compose workflow, replica paths such as `./My-Space-replica/` are resolved relative to the project root. For real deployments, use a persistent bind mount or volume so replica state survives container recreates.
-
 #### Example full `.env`
 
 ```env
@@ -264,7 +246,6 @@ LISTEN_PORT=8099
 EXTERNAL_PORT=8099
 
 MCP_ALLOWED_HOSTS=<YOUR_DOCMOST_MCP_HOSTNAME>
-DOCMOST_REPLICA_ROOT_BASE=/var/lib/docmost-mcp/replicas
 
 MODE=prod
 LOG_LEVEL=INFO
@@ -821,14 +802,15 @@ Recommended local-replica behavior:
 
 1. choose the active working-copy replica root; if omitted, the default is `./{space_name}-replica/`
 2. use `get_replica_structure(space_id, local_root?)` as the source for the initial replica layout
-3. use `create_local_replica_page(..., local_root?)` for new local-only pages not yet on remote
-4. use `get_sync_status(..., local_root?)` to discover which local files are unsynced and how each one maps to remote Docmost
-5. use `get_sync_diff(..., local_root?)` to inspect all differing sections and line ranges whenever local and remote diverge
-6. use `pull_replica(..., local_root?)` to refresh missing or remote-ahead pages locally
-7. use `push_replica(..., local_root?)` to send local-ahead or local-only pages to remote Docmost
-8. leave selectors empty for whole-space sync, pass `page_ids` for selected tracked pages, or pass `local_paths` for a single local-only page
-9. if another working copy has pushed in between, the stale working copy must pull or deliberately force after reviewing the diff
-10. never delete remote pages based solely on a missing local file without user confirmation
+3. use `create_local_replica_page(..., local_root?, existing_dir_names=...)` to get the canonical local page scaffold; the client writes the returned `page.md` and `_meta.json` locally
+4. keep local file IO and any locally stored sync-base hash on the client side
+5. use `get_sync_status(..., pages=[...], local_root?)` to discover which local pages are unsynced and how each one maps to remote Docmost
+6. use `get_sync_diff(..., pages=[...], local_root?)` to inspect all differing sections and line ranges whenever local and remote diverge
+7. use `pull_replica(..., pages=[...], local_root?)` to get canonical remote snapshots the client should write locally
+8. use `push_replica(..., pages=[...], local_root?)` to send local-ahead or local-only pages to remote Docmost
+9. leave selectors empty for whole-space sync, pass `page_ids` for selected tracked pages, or pass `local_paths` for a single local-only page
+10. if another working copy has pushed in between, the stale working copy must pull or deliberately force after reviewing the diff
+11. never delete remote pages based solely on a missing local file without user confirmation
 
 ## Replica structure and naming standard
 
@@ -850,7 +832,6 @@ Per-page replica mapping:
 - every Docmost page maps to a **directory**
 - the page's own content lives in `page.md`
 - the page's metadata lives in `_meta.json`
-- the page's sync bookkeeping lives in `_sync.json`
 - child pages become nested subdirectories under the parent page directory
 - the replica tree output already maps each remote page to:
   - page `id`
@@ -863,7 +844,7 @@ Replica root support files:
 
 - `_replica.json` stores canonical replica metadata
 - `_tree.json` stores the canonical resolved tree snapshot used for the replica
-- `_sync.json` stores server-managed replica sync state
+- any additional local sync-base bookkeeping belongs to the client-side working copy, not to the server
 
 Directory naming rule:
 
@@ -876,8 +857,9 @@ Sync and truth rule:
 
 - remote Docmost is the long-term authoritative documentation source - not assumed stale
 - the editable working copy is whichever replica root the client selected for the operation
-- when local replica files are edited, `get_sync_status` must call out the changed local file paths explicitly
-- when those edited files correspond to remote pages, sync status must identify the remote page title and page id
+- the client owns local file IO and any locally stored sync-base metadata
+- `get_sync_status` and `get_sync_diff` operate on client-reported local page state, not on server-side filesystem scans
+- when those local pages correspond to remote pages, sync status must identify the remote page title and page id
 - when local and remote diverge, `get_sync_diff` must return all differing sections and line ranges
 - when one working copy pushes before another, the stale working copy must be blocked until it pulls or intentionally forces after reviewing the diff
 - to sync: use `push_replica` and `pull_replica` as the primary workflow, and use `force` only after a deliberate resolution choice
@@ -927,13 +909,13 @@ Resolve by calling the appropriate read tool (list_spaces, list_pages) to obtain
 Maintain or create a local-first replica in the working copy being edited. If local_root is omitted, use the default location at `./{space_name}-replica/`.
 All local replica directory and file names must not contain spaces - replace with hyphens.
 Use get_replica_structure(space_id, local_root?) for the initial local replica layout.
-Use create_local_replica_page(..., local_root?) for local-only additions.
+Use create_local_replica_page(..., local_root?, existing_dir_names=...) to plan local-only additions.
 Use get_replica_standards and resolve_replica_directory_name only when you need to inspect naming behavior directly.
-Call get_sync_status(space_id, local_root?) first to classify the current state before choosing a sync action.
-Use get_sync_status to identify changed files, map them to remote pages, and report whether they are local-only, remote-only, or conflicting.
-Use get_sync_diff(space_id, ..., local_root?) to return differing sections and line numbers for every clash.
+Call get_sync_status(space_id, pages=[...], ...) first to classify the current state before choosing a sync action.
+Use get_sync_status to identify changed client-local pages, map them to remote pages, and report whether they are local-only, remote-only, or conflicting.
+Use get_sync_diff(space_id, pages=[...], ...) to return differing sections and line numbers for every clash.
 Use get_sync_diff before any force pull or force push decision.
-Use pull_replica(..., local_root?) and push_replica(..., local_root?) as the primary sync workflow. Leave selectors empty for whole-space sync, pass page_ids for selected tracked pages, or pass local_paths for a single local-only page. Only force a winner after a deliberate resolution choice.
+Use pull_replica(..., pages=[...], local_root?) and push_replica(..., pages=[...], local_root?) as the primary sync workflow. Leave selectors empty for whole-space sync, pass page_ids for selected tracked pages, or pass local_paths for a single local-only page. Only force a winner after a deliberate resolution choice.
 If one working copy pushes before another, the stale working copy must pull or intentionally force after reviewing the diff.
 When a sync result returns recommended_next_action, follow that next step instead of retrying the same blocked operation.
 If content looks stale, deprecated, or inconsistent with verified behavior, say so explicitly.

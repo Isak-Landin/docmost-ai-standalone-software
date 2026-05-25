@@ -17,8 +17,8 @@ The REST API is served by FastAPI at the root of the service.
 | `GET` | `/spaces/{space_id}/replica-structure` | `app/query/routers/replica.py` | Get deterministic local replica layout for a space |
 | `GET` | `/replica/standards` | `app/query/routers/replica.py` | Get local replica naming, structure, and sync rules |
 | `GET` | `/replica/resolve-directory-name` | `app/query/routers/replica.py` | Resolve local directory name for a page title |
-| `GET` | `/spaces/{space_id}/sync/status` | `app/sync/routers.py` | Get sync status for a space replica or chosen working copy |
-| `GET` | `/spaces/{space_id}/sync/diff` | `app/sync/routers.py` | Get line-based local-vs-remote diff hunks |
+| `POST` | `/spaces/{space_id}/sync/status` | `app/sync/routers.py` | Get sync status from client-reported local page state |
+| `POST` | `/spaces/{space_id}/sync/diff` | `app/sync/routers.py` | Get line-based local-vs-remote diff hunks from client-reported local page state |
 
 ### Write routes
 
@@ -29,9 +29,9 @@ The REST API is served by FastAPI at the root of the service.
 | `POST` | `/spaces/{space_id}/pages` | `app/write/routers/pages.py` | Create a new page |
 | `PUT` | `/spaces/{space_id}/pages/{page_id}` | `app/write/routers/pages.py` | Update page title and/or content |
 | `DELETE` | `/spaces/{space_id}/pages/{page_id}` | `app/write/routers/pages.py` | Soft-delete a page |
-| `POST` | `/spaces/{space_id}/sync/pull` | `app/sync/routers.py` | Pull remote Docmost content into the selected local working copy |
-| `POST` | `/spaces/{space_id}/sync/push` | `app/sync/routers.py` | Push selected local working-copy changes back to remote Docmost |
-| `POST` | `/spaces/{space_id}/sync/local-pages` | `app/sync/routers.py` | Scaffold a new local-only page in the selected local working copy |
+| `POST` | `/spaces/{space_id}/sync/pull` | `app/sync/routers.py` | Return canonical remote snapshots the client should write locally |
+| `POST` | `/spaces/{space_id}/sync/push` | `app/sync/routers.py` | Push selected client-local page changes back to remote Docmost |
+| `POST` | `/spaces/{space_id}/sync/local-pages` | `app/sync/routers.py` | Return the canonical local-only page scaffold plan for the client to write locally |
 
 ## Shared HTTP error codes
 
@@ -60,24 +60,28 @@ Page lookup is not global. Pages are always scoped to a space.
 The sync API is status-first and one-way per operation:
 
 1. Choose the working copy first. Pass `local_root` when the active local replica is not the default `./{space_name}-replica`.
-2. Call `GET /spaces/{space_id}/sync/status` first to classify each page as synced, local-ahead, remote-ahead, conflicting, local-only, or remote-only.
-3. Call `GET /spaces/{space_id}/sync/diff` before any force pull or force push decision.
-4. Call `POST /spaces/{space_id}/sync/local-pages` to scaffold a brand-new local-only page in the selected local working copy before it exists on remote.
-5. Call `POST /spaces/{space_id}/sync/pull` to materialize or refresh the selected local working copy from remote Docmost.
-6. Call `POST /spaces/{space_id}/sync/push` to write selected local working-copy changes back to remote Docmost.
+2. Call `POST /spaces/{space_id}/sync/status` first and pass the current local page state in the request body.
+3. Call `POST /spaces/{space_id}/sync/diff` before any force pull or force push decision.
+4. Call `POST /spaces/{space_id}/sync/local-pages` to get the canonical scaffold for a brand-new local-only page before it exists on remote.
+5. Call `POST /spaces/{space_id}/sync/pull` to get the canonical remote snapshots the client should write locally.
+6. Call `POST /spaces/{space_id}/sync/push` to write selected client-local page changes back to remote Docmost.
 7. Do not expect pull to auto-push first, or push to auto-pull first. Follow `recommended_next_action` when an operation is blocked.
 
-Both `POST /spaces/{space_id}/sync/pull` and `POST /spaces/{space_id}/sync/push` accept the same JSON body:
+`POST /spaces/{space_id}/sync/status`, `POST /spaces/{space_id}/sync/diff`, `POST /spaces/{space_id}/sync/pull`, and `POST /spaces/{space_id}/sync/push` all operate on client-reported local page state.
+
+A typical request body for pull or push is:
 
 ```json
 {
   "local_root": "",
+  "pages": [],
   "page_ids": [],
   "local_paths": [],
   "force": false
 }
 ```
 
+- `pages` is the client-local page set being compared or pushed
 - leave `page_ids` and `local_paths` empty to operate on the whole selected working copy
 - use `page_ids` for tracked remote pages inside that working copy
 - use `local_paths` for local-only pages that do not have a remote UUID yet

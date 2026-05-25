@@ -8,52 +8,48 @@ from fastapi import APIRouter, HTTPException
 from app.models import (
     LocalReplicaPageCreateIn,
     LocalReplicaPageOut,
+    SyncDiffIn,
+    SyncSelectionIn,
+    SyncStatusIn,
     SpaceSyncDiffOut,
     SpaceSyncStatusOut,
     SyncOperationOut,
-    SyncSelectionIn,
 )
 from app.sync.service import create_local_replica_page, get_sync_diff, get_sync_status, pull_replica, push_replica
 
 router = APIRouter(prefix="/spaces/{space_id}/sync", tags=["sync"])
 
 
-@router.get(
+@router.post(
     "/status",
     response_model=SpaceSyncStatusOut,
     summary="Get sync status for a space replica",
     description=(
-        "Returns the current sync state for one Docmost space replica, including "
-        "which local files are not in sync with remote Docmost, how each page is mapped, and "
-        "which pages currently clash. Pass local_root to inspect a specific local working copy."
+        "Returns the current sync state for one Docmost space using the client-reported local page state "
+        "supplied in the request body. The server compares that local state against live Docmost pages and "
+        "returns page mappings, drift classification, and recommended next actions."
     ),
 )
-def sync_status(space_id: UUID, include_synced: bool = False, local_root: Optional[str] = None):
+def sync_status(space_id: UUID, body: SyncStatusIn):
     try:
-        return get_sync_status(space_id, include_synced=include_synced, local_root=local_root)
+        return get_sync_status(space_id, body)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@router.get(
+@router.post(
     "/diff",
     response_model=SpaceSyncDiffOut,
     summary="Get sync diff for a space replica",
     description=(
-        "Returns line-based local-vs-remote diff hunks for the selected page or for all unsynced "
-        "pages in the space replica. Use this before deciding how to resolve clashes. "
-        "Pass local_root or an explicit local_path inside the target working copy when needed."
+        "Returns line-based client-local-vs-remote diff hunks for the selected page or for all unsynced pages "
+        "using the client-reported local page state supplied in the request body. Use this before deciding how "
+        "to resolve clashes."
     ),
 )
-def sync_diff(
-    space_id: UUID,
-    page_id: Optional[UUID] = None,
-    local_path: Optional[str] = None,
-    include_synced: bool = False,
-    local_root: Optional[str] = None,
-):
+def sync_diff(space_id: UUID, body: SyncDiffIn):
     try:
-        return get_sync_diff(space_id, page_id=page_id, local_path=local_path, include_synced=include_synced, local_root=local_root)
+        return get_sync_diff(space_id, body)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -61,10 +57,10 @@ def sync_diff(
 @router.post(
     "/local-pages",
     response_model=LocalReplicaPageOut,
-    summary="Scaffold a new local-only page in a local replica",
+    summary="Plan a new local-only page in a local replica",
     description=(
-        "Creates a canonical local-only page directory, page.md, and _meta.json inside the selected local working copy "
-        "so local-first documentation work can begin before any remote Docmost page exists."
+        "Returns the canonical client-local paths, page.md content, and `_meta.json` payload for a new local-only page "
+        "inside the selected local replica. The client writes those files locally."
     ),
 )
 def create_local_sync_page(space_id: UUID, body: LocalReplicaPageCreateIn):
@@ -79,9 +75,9 @@ def create_local_sync_page(space_id: UUID, body: LocalReplicaPageCreateIn):
     response_model=SyncOperationOut,
     summary="Pull remote Docmost changes into a local replica",
     description=(
-        "Materializes missing remote pages locally, refreshes local files when remote is ahead, "
-        "and returns all clashes when local and remote both changed. Set `force=true` to take "
-        "remote content when conflicts exist. Use local_root to target a specific working copy."
+        "Compares the client-reported local page state to live Docmost pages and returns canonical remote snapshots "
+        "for pages that should be materialized or refreshed locally. Set `force=true` to take the current remote page "
+        "even when the client-local page diverged."
     ),
 )
 def pull_sync(space_id: UUID, body: SyncSelectionIn):
@@ -96,9 +92,9 @@ def pull_sync(space_id: UUID, body: SyncSelectionIn):
     response_model=SyncOperationOut,
     summary="Push local replica changes to remote Docmost",
     description=(
-        "Pushes local replica changes to remote Docmost, creates remote pages for local-only "
-        "replica entries, and returns all clashes when local and remote both changed. Set "
-        "`force=true` to take local content when conflicts exist. Use local_root to target a specific working copy."
+        "Pushes the client-reported local page state to remote Docmost when the sync status allows it, creates remote "
+        "pages for local-only entries, and returns clashes when local and remote both changed. Set `force=true` to take "
+        "the client-local page over the current remote Docmost page."
     ),
 )
 def push_sync(space_id: UUID, body: SyncSelectionIn):

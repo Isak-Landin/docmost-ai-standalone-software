@@ -179,9 +179,10 @@ Used by `pull_replica` and `push_replica` to target all pages or a subset.
 
 | Field | Type | Description |
 |---|---|---|
+| `pages` | list[ClientReplicaPageIn] | Client-reported local page states used for status, diff, pull, and push |
 | `page_ids` | list[UUID] | Optional remote page UUIDs to target |
 | `local_root` | str? | Optional local working-copy root for whole-space, selected-page, or single-page sync |
-| `local_paths` | list[str] | Optional replica paths to target, useful for local-only pages |
+| `local_paths` | list[str] | Optional client-local replica paths to target, useful for local-only pages |
 | `force` | bool | Whether the operation should force its source of truth when conflicts exist |
 
 ## PageSyncStatusOut
@@ -196,11 +197,11 @@ Key fields:
 | `title` | str? | Best-known title |
 | `sync_state` | literal | `synced`, `local_only_change`, `remote_only_change`, `conflicted`, `remote_only_page`, `local_only_page`, `remote_deleted`, or `local_missing` |
 | `summary` | str | Human-readable state summary |
-| `local_path` | str? | Replica-relative path to `page.md` |
+| `local_path` | str? | Client-local path to `page.md` |
 | `remote_exists` | bool | Whether the page exists in Docmost |
-| `local_exists` | bool | Whether the local content file exists |
-| `local_changed` | bool | Whether local content differs from the last sync base |
-| `remote_changed` | bool | Whether remote content differs from the last sync base |
+| `local_exists` | bool | Whether the client supplied local content for the page |
+| `local_changed` | bool | Whether local page state differs from the last sync base |
+| `remote_changed` | bool | Whether remote page state differs from the last sync base |
 | `has_conflicts` | bool | Whether both sides changed |
 | `recommended_action` | literal | Next recommended tool or action |
 | `allowed_actions` | list[str] | Allowed next-step actions for automation |
@@ -212,9 +213,7 @@ Returned by `get_sync_status`.
 | Field | Type | Description |
 |---|---|---|
 | `space` | SpaceSummaryOut | Space summary |
-| `replica_root` | str | Replica root for the active local working copy |
-| `replica_root_abs_path` | str | Absolute host path to the active local replica root |
-| `replica_exists` | bool | Whether the replica exists on disk |
+| `local_root` | str | Client-local replica root used to project suggested local paths |
 | `pipeline_expectations` | list[str] | Status-first sync workflow guidance |
 | `counts` | SyncStatusCountsOut | Count of pages in each sync state |
 | `pages` | list[PageSyncStatusOut] | Per-page sync state |
@@ -249,3 +248,4 @@ Each `SyncOperationResultOut` includes:
 - `message` - human-readable outcome
 - `recommended_next_action` - the next step to follow when the operation was blocked or skipped
 - `conflicts` - returned hunks when the operation could not proceed safely
+- `snapshot` - the canonical remote or post-push page state the client should store locally

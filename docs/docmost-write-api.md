@@ -215,39 +215,42 @@ right after writing, add a short wait or read from the REST response instead.
 For our use case (syncing a local-first working-copy replica -> remote Docmost), these endpoints are the
 low-level building blocks used by the higher-level sync workflow:
 
-1. use `POST /spaces/{space_id}/sync/local-pages` with `local_root` when needed to scaffold a brand-new local-only page in the chosen working copy
-2. use replica status/diff tooling against that working copy to determine whether the page is local-only, remote-only, or conflicting
-3. let `push_replica` call `POST /api/pages/create` when a local-only replica page needs to become a new remote page
-4. retain the returned `id` for future `POST /api/pages/update` calls when the page already exists remotely
-5. only bypass the higher-level sync workflow when you intentionally need direct per-page control
+1. use `POST /spaces/{space_id}/sync/local-pages` with `local_root` when needed to get the canonical local-only page scaffold plan for the chosen working copy
+2. let the client write the returned `page.md` and `_meta.json` locally
+3. use replica status/diff tooling with client-reported local page state to determine whether the page is local-only, remote-only, or conflicting
+4. let `push_replica` call `POST /api/pages/create` when a local-only replica page needs to become a new remote page
+5. let `push_replica` call `POST /api/pages/update` when an existing remote page should be updated
+6. store the returned `base_revision_hash` locally after a successful pull or push so future stale-push detection has a common base
+7. only bypass the higher-level sync workflow when you intentionally need direct per-page control
 
 ---
 
 ## Working-copy root selection and stale-push behavior
 
 The sync workflow is local-first and supports multiple local working copies for the same space.
-The server owns canonical structure, comparison normalization, and stale-push detection.
+The client owns local file IO and any locally stored sync-base metadata.
+The server owns canonical path planning, comparison normalization, diffing, and safe remote Docmost writes.
 
 ### Choosing which working copy to sync
 
-- Pass `local_root` to `get_replica_structure`, `get_sync_status`, `get_sync_diff`, `create_local_replica_page`, `pull_replica`, or `push_replica` when the active working copy is not the service default at `./{space_name}-replica`.
+- Pass `local_root` to `get_replica_structure`, `get_sync_status`, `get_sync_diff`, `create_local_replica_page`, `pull_replica`, or `push_replica` when the active working copy is not the default `./{space_name}-replica`.
 - Leave `local_root` empty to use that default replica location.
-- For `get_sync_diff`, `pull_replica`, and `push_replica`, the service can also infer the working-copy root from an explicit `local_path` or `local_paths` entry when all selected paths belong to the same replica.
+- `local_root` is used only to project suggested client-local paths. The server does not read or write that filesystem path.
 
 ### Whole-space vs selected-page vs single-page sync
 
-- Whole-space sync: leave `page_ids` and `local_paths` empty and pass only `local_root`.
-- Selected tracked pages: pass `page_ids=[...]` inside the chosen `local_root`.
-- Single local-only page: pass `local_paths=[...]` for the chosen working copy.
+- Whole-space sync: pass the full local page set in `pages=[...]` and leave `page_ids` / `local_paths` empty.
+- Selected tracked pages: pass the relevant local page set in `pages=[...]` and narrow the operation with `page_ids=[...]`.
+- Single local-only page: pass that page in `pages=[...]` and narrow the operation with `local_paths=[...]`.
 
 ### What blocks a stale push
 
-Each page carries a recorded sync base in `_sync.json`.
+Each locally tracked page should carry a recorded `base_revision_hash` in client-side metadata.
 When a working copy tries to push, the server compares:
 
-1. that working copy's local content hash
-2. that working copy's recorded base hash
-3. the current remote Docmost content hash
+1. that working copy's current local page revision hash (title + content)
+2. that working copy's recorded base revision hash
+3. the current remote Docmost page revision hash
 
 If another working copy has pushed since this one last pulled, the second working copy becomes
 `remote_only_change` or `conflicted` and `push_replica` must block unless the caller deliberately
@@ -262,6 +265,15 @@ New documentation changes are made in the chosen local working copy first.
 Remote Docmost is the latest pushed online representation.
 The sync engine should accept that local working copy when the remote page still matches its
 recorded sync base, and should block or conflict when another push has landed in between.
+
+### Important clarification
+
+The current sync surfaces are stateless with respect to local file IO:
+
+- `get_sync_status`, `get_sync_diff`, `pull_replica`, and `push_replica` operate on the client-reported local page state passed in the request body
+- the server does **not** scan a client filesystem path from `local_root`
+- `pull_replica` returns canonical remote snapshots for the client to write locally
+- `push_replica` writes only to remote Docmost, using the same Docmost entrypoints documented above
 
 ---
 

@@ -196,29 +196,53 @@ class LocalReplicaPageCreateIn(BaseModel):
     local_root: Optional[str] = Field(
         None,
         description=(
-            "Optional host path to the local working-copy replica root that should be scaffolded or used for sync. "
-            "When omitted, the service uses the default configured replica root for the space."
+            "Optional client-side local replica root to project paths into. "
+            "When omitted, the service uses the default `./{space_name}-replica` root."
         ),
+    )
+    existing_dir_names: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Existing sibling directory names in the client local replica. Pass these when creating a local-only page "
+            "so the server can resolve collisions without reading the client filesystem."
+        ),
+    )
+
+
+class LocalReplicaPageMetaTemplateOut(BaseModel):
+    id: Optional[UUID] = Field(None, description="Remote page UUID when one already exists. Null for a new local-only page.")
+    title: Optional[str] = Field(None, description="Page title to store in the local `_meta.json`.")
+    slug_id: Optional[str] = Field(None, description="Remote slug identifier when one already exists.")
+    parent_page_id: Optional[UUID] = Field(None, description="Resolved remote parent page UUID when one is already known.")
+    parent_local_dir_path: Optional[str] = Field(None, description="Local parent directory path to store for local-only nesting.")
+    space_id: UUID = Field(description="Owning Docmost space UUID.")
+    content_file_path: str = Field(description="Client-local path where page markdown should be stored.")
+    meta_file_path: str = Field(description="Client-local path where `_meta.json` should be stored.")
+
+
+class LocalReplicaPageSyncTemplateOut(BaseModel):
+    base_revision_hash: Optional[str] = Field(
+        None,
+        description="Initial sync-base revision hash to store locally. Null for a brand-new local-only page.",
     )
 
 
 class LocalReplicaPageOut(BaseModel):
     space: SpaceSummaryOut
-    replica_root: str = Field(description="Replica root path for the active local working copy.")
-    replica_root_abs_path: str = Field(description="Absolute host path to the active local replica root.")
+    local_root: str = Field(description="Client-local replica root used for the scaffold plan.")
     title: str = Field(description="Title of the newly scaffolded local-only page.")
     parent_page_id: Optional[UUID] = Field(None, description="Resolved remote parent page UUID when one is already known.")
     parent_local_path: Optional[str] = Field(None, description="Resolved local replica directory path for the parent page when nested.")
     local_dir_path: str = Field(description="Local replica directory path for the new page.")
-    local_dir_abs_path: str = Field(description="Absolute server-side path to the new page directory.")
     content_file_path: str = Field(description="Local replica content file path for the new page.")
-    content_file_abs_path: str = Field(description="Absolute server-side path to the new page content file.")
     meta_file_path: str = Field(description="Local replica metadata file path for the new page.")
-    meta_file_abs_path: str = Field(description="Absolute server-side path to the new page metadata file.")
     sync_state: Literal["local_only_page"] = Field(description="Initial sync state for a newly scaffolded local-only page.")
     recommended_next_action: Literal["push_replica"] = Field(description="Recommended next sync action after the page is edited locally.")
     naming: ReplicaNameResolutionOut = Field(description="Resolved naming decision used for the new local page directory.")
-    message: str = Field(description="Human-readable explanation of the scaffolded local-only page.")
+    content: str = Field(description="Initial markdown content the client should write to the new `page.md` file.")
+    meta_template: LocalReplicaPageMetaTemplateOut = Field(description="Canonical `_meta.json` payload the client should write.")
+    sync_template: LocalReplicaPageSyncTemplateOut = Field(description="Initial local sync-state payload the client should store.")
+    message: str = Field(description="Human-readable explanation of the scaffold plan.")
 
 
 # ---------------------------------------------------------------------------
@@ -289,31 +313,108 @@ SyncRecommendedAction = Literal[
 ]
 
 
-class SyncSelectionIn(BaseModel):
+class ClientReplicaPageIn(BaseModel):
+    page_id: Optional[UUID] = Field(None, description="Remote page UUID when this local page already exists in Docmost.")
+    title: Optional[str] = Field(None, description="Client-local page title. Used for title diffing and remote writes.")
+    slug_id: Optional[str] = Field(None, description="Remote slug identifier when known.")
+    parent_page_id: Optional[UUID] = Field(None, description="Resolved remote parent page UUID when known.")
+    parent_local_path: Optional[str] = Field(
+        None,
+        description="Client-local parent page path when this page is nested under a local-only parent that does not yet have a remote UUID.",
+    )
+    local_path: Optional[str] = Field(None, description="Client-local `page.md` path for this page.")
+    meta_file_path: Optional[str] = Field(None, description="Client-local `_meta.json` path for this page.")
+    content: Optional[str] = Field(
+        None,
+        description=(
+            "Current client-local markdown content. Pass null only when the local page is missing or intentionally omitted "
+            "from the current sync request."
+        ),
+    )
+    base_revision_hash: Optional[str] = Field(
+        None,
+        description=(
+            "Revision hash recorded by the client when this page was last synchronized. "
+            "This hash must represent the canonical page title plus canonical page content."
+        ),
+    )
+
+
+class SyncStatusIn(BaseModel):
     local_root: Optional[str] = Field(
         None,
         description=(
-            "Optional host path to the local working-copy replica root to inspect or sync. "
-            "Use this for whole-space, selected-page, or single-page sync against a repo-local replica."
+            "Optional client-local replica root used only to project suggested local paths. "
+            "The server does not read or write this filesystem path."
+        ),
+    )
+    pages: list[ClientReplicaPageIn] = Field(
+        default_factory=list,
+        description=(
+            "Client-reported local page states. For whole-space status or diff, pass all tracked local pages so the "
+            "server can compare them against the current remote Docmost tree."
         ),
     )
     page_ids: list[UUID] = Field(
         default_factory=list,
-        description="Optional remote page UUIDs to target. Leave empty to operate on the whole space.",
+        description="Optional remote page UUIDs to target. Leave empty to classify the whole remote space plus all provided local-only pages.",
     )
     local_paths: list[str] = Field(
         default_factory=list,
         description=(
-            "Optional local replica content file paths to target. Useful for local-only pages without a remote UUID yet, "
-            "or for narrowing a sync inside the selected local working-copy replica."
+            "Optional client-local page paths to target. Useful for local-only pages without a remote UUID or for narrowing a request "
+            "to a subset of the provided local pages."
         ),
+    )
+    include_synced: bool = Field(
+        False,
+        description="When true, include pages that are already synced in the response.",
+    )
+
+
+class SyncDiffIn(BaseModel):
+    local_root: Optional[str] = Field(
+        None,
+        description=(
+            "Optional client-local replica root used only to project suggested local paths. "
+            "The server does not read or write this filesystem path."
+        ),
+    )
+    pages: list[ClientReplicaPageIn] = Field(
+        default_factory=list,
+        description="Client-reported local page states to compare against the current remote Docmost pages.",
+    )
+    page_id: Optional[UUID] = Field(None, description="Optional single remote page UUID to focus the diff on.")
+    local_path: Optional[str] = Field(None, description="Optional single client-local page path to focus the diff on.")
+    include_synced: bool = Field(False, description="When true, include already-synced pages in the diff response.")
+
+
+class SyncSelectionIn(BaseModel):
+    local_root: Optional[str] = Field(
+        None,
+        description=(
+            "Optional client-local replica root used only to project suggested local paths. "
+            "The server does not read or write this filesystem path."
+        ),
+    )
+    pages: list[ClientReplicaPageIn] = Field(
+        default_factory=list,
+        description="Client-reported local page states to use for the pull or push operation.",
+    )
+    page_ids: list[UUID] = Field(
+        default_factory=list,
+        description="Optional remote page UUIDs to target. Leave empty to operate on the whole remote space plus all provided local-only pages.",
+    )
+    local_paths: list[str] = Field(
+        default_factory=list,
+        description="Optional client-local page paths to target.",
     )
     force: bool = Field(
         False,
         description=(
             "When true, resolve pull or push conflicts by taking the operation's source of truth. "
-            "For pull this overwrites local replica content with remote content. "
-            "For push this overwrites remote content with local replica content."
+            "For pull this returns the current remote snapshot even when the client-local page diverged. "
+            "For push this overwrites remote Docmost with the client-local page state."
         ),
     )
 
@@ -336,31 +437,26 @@ class PageSyncStatusOut(BaseModel):
     parent_page_id: Optional[UUID] = Field(None, description="Best-known parent page UUID.")
     sync_state: SyncState = Field(description="Computed sync state for the page.")
     summary: str = Field(description="Human-readable explanation of the current sync state.")
-    local_path: Optional[str] = Field(None, description="Replica content file path inside the active local working copy.")
-    local_abs_path: Optional[str] = Field(None, description="Absolute host path to the replica content file when it exists.")
-    desired_local_path: Optional[str] = Field(None, description="Expected replica content file path for a remote page when it has not been materialized locally yet.")
-    desired_local_abs_path: Optional[str] = Field(None, description="Absolute host path where the remote page would be materialized locally.")
-    meta_file_path: Optional[str] = Field(None, description="Replica metadata file path inside the active local working copy.")
-    meta_abs_path: Optional[str] = Field(None, description="Absolute host path to the replica metadata file when it exists.")
+    local_path: Optional[str] = Field(None, description="Client-local `page.md` path when the page is tracked locally.")
+    desired_local_path: Optional[str] = Field(None, description="Suggested client-local `page.md` path when a remote page is not yet materialized locally.")
+    meta_file_path: Optional[str] = Field(None, description="Client-local `_meta.json` path when known or suggested.")
     remote_exists: bool = Field(description="Whether the page currently exists in remote Docmost.")
-    local_exists: bool = Field(description="Whether the replica content file currently exists locally.")
+    local_exists: bool = Field(description="Whether the client supplied local content for this page.")
     local_changed: bool = Field(description="Whether local content differs from the last sync base.")
     remote_changed: bool = Field(description="Whether remote content differs from the last sync base.")
     has_conflicts: bool = Field(description="Whether local and remote changes currently clash.")
     recommended_action: SyncRecommendedAction = Field(description="Recommended next tool or action for this page's current state.")
     allowed_actions: list[str] = Field(default_factory=list, description="Allowed next-step actions for automation or users handling this state.")
-    base_content_hash: Optional[str] = Field(None, description="Hash of the last synchronized content base, when known.")
-    local_content_hash: Optional[str] = Field(None, description="Hash of the current local content, when available.")
-    remote_content_hash: Optional[str] = Field(None, description="Hash of the current remote content, when available.")
+    base_revision_hash: Optional[str] = Field(None, description="Revision hash recorded by the client at the last successful sync.")
+    local_revision_hash: Optional[str] = Field(None, description="Revision hash of the current client-local page title and content.")
+    remote_revision_hash: Optional[str] = Field(None, description="Revision hash of the current remote Docmost page title and content.")
 
 
 class SpaceSyncStatusOut(BaseModel):
     space: SpaceSummaryOut
-    replica_root: str = Field(description="Replica root path for the active local working copy.")
-    replica_root_abs_path: str = Field(description="Absolute host path to the active local replica root.")
-    replica_exists: bool = Field(description="Whether the space replica root currently exists on disk.")
+    local_root: str = Field(description="Client-local replica root used to project suggested local paths.")
     generated_at: datetime
-    pipeline_expectations: list[str] = Field(default_factory=list, description="Recommended status/diff/pull/push pipeline for this replica.")
+    pipeline_expectations: list[str] = Field(default_factory=list, description="Recommended status/diff/pull/push pipeline for this client-local replica workflow.")
     counts: SyncStatusCountsOut
     pages: list[PageSyncStatusOut] = Field(default_factory=list)
 
@@ -380,40 +476,53 @@ class PageSyncDiffOut(BaseModel):
     title: Optional[str] = Field(None, description="Best-known page title.")
     sync_state: SyncState = Field(description="Computed sync state for the page.")
     summary: str = Field(description="Human-readable explanation of the diff result.")
-    local_path: Optional[str] = Field(None, description="Replica content file path inside the active local working copy.")
-    local_abs_path: Optional[str] = Field(None, description="Absolute host path to the replica content file when it exists.")
+    local_path: Optional[str] = Field(None, description="Client-local `page.md` path when known.")
+    meta_file_path: Optional[str] = Field(None, description="Client-local `_meta.json` path when known or suggested.")
     remote_exists: bool = Field(description="Whether the page currently exists in remote Docmost.")
-    local_exists: bool = Field(description="Whether the replica content file currently exists locally.")
+    local_exists: bool = Field(description="Whether the client supplied local content for this page.")
     has_conflicts: bool = Field(description="Whether the diff represents a true local-vs-remote clash.")
     hunks: list[SyncDiffHunkOut] = Field(default_factory=list, description="All differing line sections between local and remote content.")
 
 
 class SpaceSyncDiffOut(BaseModel):
     space: SpaceSummaryOut
-    replica_root: str = Field(description="Replica root path for the active local working copy.")
-    replica_root_abs_path: str = Field(description="Absolute host path to the active local replica root.")
+    local_root: str = Field(description="Client-local replica root used to project suggested local paths.")
     generated_at: datetime
     pages: list[PageSyncDiffOut] = Field(default_factory=list)
+
+
+class SyncPageSnapshotOut(BaseModel):
+    page_id: Optional[UUID] = Field(None, description="Remote page UUID after the operation, when known.")
+    title: Optional[str] = Field(None, description="Page title after the operation.")
+    slug_id: Optional[str] = Field(None, description="Remote slug identifier after the operation, when known.")
+    parent_page_id: Optional[UUID] = Field(None, description="Resolved remote parent page UUID after the operation, when known.")
+    local_path: Optional[str] = Field(None, description="Client-local `page.md` path the snapshot applies to.")
+    meta_file_path: Optional[str] = Field(None, description="Client-local `_meta.json` path the snapshot applies to.")
+    content: Optional[str] = Field(None, description="Canonical markdown content the client should store locally after the operation.")
+    base_revision_hash: Optional[str] = Field(None, description="Revision hash the client should store as the new sync base after applying the snapshot.")
 
 
 class SyncOperationResultOut(BaseModel):
     page_id: Optional[UUID] = Field(None, description="Remote page UUID when the page exists remotely.")
     title: Optional[str] = Field(None, description="Best-known page title.")
-    local_path: Optional[str] = Field(None, description="Replica content file path inside the active local working copy.")
-    local_abs_path: Optional[str] = Field(None, description="Absolute host path to the replica content file when it exists.")
+    local_path: Optional[str] = Field(None, description="Client-local `page.md` path when known.")
+    meta_file_path: Optional[str] = Field(None, description="Client-local `_meta.json` path when known or suggested.")
     sync_state_before: SyncState = Field(description="The sync state before this operation processed the page.")
     action: str = Field(description="Action taken or attempted for this page.")
     applied: bool = Field(description="Whether the operation actually mutated local or remote state.")
     message: str = Field(description="Human-readable result message for this page.")
     recommended_next_action: Optional[SyncRecommendedAction] = Field(None, description="Recommended next action when this operation was blocked or skipped.")
     conflicts: list[SyncDiffHunkOut] = Field(default_factory=list, description="Conflict hunks returned when the operation could not proceed safely.")
+    snapshot: Optional[SyncPageSnapshotOut] = Field(
+        None,
+        description="Canonical page snapshot the client should write locally after a successful pull or after updating local metadata from a successful push.",
+    )
 
 
 class SyncOperationOut(BaseModel):
     space: SpaceSummaryOut
     operation: Literal["pull", "push"] = Field(description="Which sync operation was executed.")
-    replica_root: str = Field(description="Replica root path for the active local working copy.")
-    replica_root_abs_path: str = Field(description="Absolute host path to the active local replica root.")
+    local_root: str = Field(description="Client-local replica root used to project suggested local paths.")
     force: bool = Field(description="Whether conflict resolution was forced in favor of the operation source.")
     generated_at: datetime
     applied_count: int = 0
