@@ -212,10 +212,13 @@ right after writing, add a short wait or read from the REST response instead.
 | Replace/append/prepend content on an existing page | `POST /api/pages/update` with `operation` + `content` + `format` |
 | Rename a page or change its icon only | `POST /api/pages/update` with `title` / `icon`, no content |
 
-For our use case (syncing local replica -> remote Docmost), the expected flow is:
+For our use case (syncing the server-side replica -> remote Docmost), these endpoints are the
+low-level building blocks used by the higher-level sync workflow:
 
-1. `POST /api/pages/create` to create the page with full markdown content
-2. Retain the returned `id` for future `update` calls if content changes
+1. use replica status/diff tooling to determine whether the page is local-only, remote-only, or conflicting
+2. call `POST /api/pages/create` when a local-only replica page needs to become a new remote page
+3. retain the returned `id` for future `POST /api/pages/update` calls when the page already exists remotely
+4. only bypass the higher-level sync workflow when you intentionally need direct per-page control
 
 ---
 

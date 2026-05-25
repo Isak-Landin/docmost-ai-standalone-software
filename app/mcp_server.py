@@ -27,7 +27,10 @@ from app.models import (
     ReplicaStructureOut,
     SpaceCreateIn,
     SpaceOut,
+    SpaceSyncDiffOut,
+    SpaceSyncStatusOut,
     SpaceTreeOut,
+    SyncOperationOut,
 )
 from app.write.docmost import create_page as docmost_create_page
 from app.write.docmost import create_space as docmost_create_space
@@ -39,6 +42,12 @@ from app.query.replica import (
     get_replica_standards as fetch_replica_standards,
     get_replica_structure as fetch_replica_structure,
     resolve_replica_directory_name as resolve_replica_directory_name_impl,
+)
+from app.sync.service import (
+    get_sync_diff as fetch_sync_diff,
+    get_sync_status as fetch_sync_status,
+    pull_replica as run_pull_replica,
+    push_replica as run_push_replica,
 )
 
 SERVER_INSTRUCTIONS = """
@@ -90,9 +99,16 @@ Maintain or create a local replica at `./{space_name}-replica/` when the client 
 All local replica directory and file names must not contain spaces — replace with hyphens.
 Use get_replica_structure for the initial local replica layout.
 Use get_replica_standards and resolve_replica_directory_name for local-only additions.
-When local replica files are edited, identify changed files, map them to remote pages,
-and tell the user those changes still need manual sync back to remote Docmost.
-Treat remote Docmost as potentially stale after local-only edits until manual sync.
+Keep canonical replica descriptors in `_replica.json`, `_tree.json`, and per-page `_meta.json`.
+Keep server-side sync bookkeeping in separate `_sync.json` files rather than redefining the replica shape.
+Use get_sync_status to identify unsynced local or remote pages programmatically.
+Use get_sync_diff to return line-based local-vs-remote differences and all clashes.
+Use pull_replica to materialize or refresh the server-side replica from remote Docmost.
+Use push_replica to push local replica changes back to remote Docmost.
+pull_replica never auto-pushes local changes first.
+push_replica never auto-pulls remote changes first.
+If both local and remote changed since the last sync base, return the clashes and let the
+consuming model decide whether to force pull, force push, or ask the user.
 If content looks stale, deprecated, or inconsistent with verified behavior, say so explicitly.
 If requested data is missing, report that explicitly instead of guessing.
 """.strip()
@@ -174,6 +190,72 @@ def get_replica_structure(space_id: UUID) -> ReplicaStructureOut:
     except DocmostConnectionError as exc:
         raise ToolError(str(exc)) from exc
     except SpaceNotFoundError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+@mcp.tool()
+def get_sync_status(space_id: UUID, include_synced: bool = False) -> SpaceSyncStatusOut:
+    """Get the current server-side sync status for one space replica."""
+    try:
+        return fetch_sync_status(space_id, include_synced=include_synced)
+    except Exception as exc:
+        raise ToolError(str(exc)) from exc
+
+
+@mcp.tool()
+def get_sync_diff(
+    space_id: UUID,
+    page_id: UUID | None = None,
+    local_path: str = "",
+    include_synced: bool = False,
+) -> SpaceSyncDiffOut:
+    """Get line-based local-vs-remote diff hunks for one page or all unsynced pages in a space replica."""
+    try:
+        return fetch_sync_diff(
+            space_id,
+            page_id=page_id,
+            local_path=local_path or None,
+            include_synced=include_synced,
+        )
+    except Exception as exc:
+        raise ToolError(str(exc)) from exc
+
+
+@mcp.tool()
+def pull_replica(
+    space_id: UUID,
+    page_ids: list[UUID] | None = None,
+    local_paths: list[str] | None = None,
+    force: bool = False,
+) -> SyncOperationOut:
+    """Pull remote Docmost changes into the server-side replica for one space."""
+    try:
+        from app.models import SyncSelectionIn
+
+        return run_pull_replica(
+            space_id,
+            SyncSelectionIn(page_ids=page_ids or [], local_paths=local_paths or [], force=force),
+        )
+    except Exception as exc:
+        raise ToolError(str(exc)) from exc
+
+
+@mcp.tool()
+def push_replica(
+    space_id: UUID,
+    page_ids: list[UUID] | None = None,
+    local_paths: list[str] | None = None,
+    force: bool = False,
+) -> SyncOperationOut:
+    """Push server-side replica changes back to remote Docmost for one space."""
+    try:
+        from app.models import SyncSelectionIn
+
+        return run_push_replica(
+            space_id,
+            SyncSelectionIn(page_ids=page_ids or [], local_paths=local_paths or [], force=force),
+        )
+    except Exception as exc:
         raise ToolError(str(exc)) from exc
 
 

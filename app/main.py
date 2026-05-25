@@ -5,6 +5,7 @@ from fastapi import FastAPI
 
 from app.mcp_server import mcp
 from app.query.routers import health, pages, replica, spaces
+from app.sync import routers as sync
 from app.write.routers import pages as write_pages
 from app.write.routers import spaces as write_spaces
 
@@ -27,6 +28,7 @@ app = FastAPI(
 
 app.include_router(health.router)
 app.include_router(replica.router)
+app.include_router(sync.router)
 # Query (read) routes — backed by direct PostgreSQL access
 app.include_router(spaces.router)
 app.include_router(pages.router)

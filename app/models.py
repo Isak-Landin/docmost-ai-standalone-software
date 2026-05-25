@@ -217,3 +217,151 @@ class PageUpdateIn(BaseModel):
 class DeletedOut(BaseModel):
     deleted: bool = Field(True, description="Always true on successful deletion.")
     id: str = Field(description="UUID of the deleted resource.")
+
+
+# ---------------------------------------------------------------------------
+# Sync request/response models
+# ---------------------------------------------------------------------------
+
+
+SyncState = Literal[
+    "synced",
+    "local_only_change",
+    "remote_only_change",
+    "conflicted",
+    "remote_only_page",
+    "local_only_page",
+    "remote_deleted",
+    "local_missing",
+]
+
+SyncRecommendedAction = Literal[
+    "none",
+    "pull_replica",
+    "push_replica",
+    "get_sync_diff",
+    "review_remote_deletion",
+]
+
+
+class SyncSelectionIn(BaseModel):
+    page_ids: list[UUID] = Field(
+        default_factory=list,
+        description="Optional remote page UUIDs to target. Leave empty to operate on the whole space.",
+    )
+    local_paths: list[str] = Field(
+        default_factory=list,
+        description="Optional local replica content file paths to target. Useful for local-only pages without a remote UUID yet.",
+    )
+    force: bool = Field(
+        False,
+        description=(
+            "When true, resolve pull or push conflicts by taking the operation's source of truth. "
+            "For pull this overwrites local replica content with remote content. "
+            "For push this overwrites remote content with local replica content."
+        ),
+    )
+
+
+class SyncStatusCountsOut(BaseModel):
+    synced: int = 0
+    local_only_change: int = 0
+    remote_only_change: int = 0
+    conflicted: int = 0
+    remote_only_page: int = 0
+    local_only_page: int = 0
+    remote_deleted: int = 0
+    local_missing: int = 0
+
+
+class PageSyncStatusOut(BaseModel):
+    page_id: Optional[UUID] = Field(None, description="Remote page UUID when the page exists remotely.")
+    title: Optional[str] = Field(None, description="Best-known page title.")
+    slug_id: Optional[str] = Field(None, description="Remote slug identifier when available.")
+    parent_page_id: Optional[UUID] = Field(None, description="Best-known parent page UUID.")
+    sync_state: SyncState = Field(description="Computed sync state for the page.")
+    summary: str = Field(description="Human-readable explanation of the current sync state.")
+    local_path: Optional[str] = Field(None, description="Replica content file path relative to the configured replica root base.")
+    local_abs_path: Optional[str] = Field(None, description="Absolute server-side path to the replica content file when it exists.")
+    desired_local_path: Optional[str] = Field(None, description="Expected replica content file path for a remote page when it has not been materialized locally yet.")
+    desired_local_abs_path: Optional[str] = Field(None, description="Absolute server-side path where the remote page would be materialized locally.")
+    meta_file_path: Optional[str] = Field(None, description="Replica metadata file path relative to the configured replica root base.")
+    meta_abs_path: Optional[str] = Field(None, description="Absolute server-side path to the replica metadata file when it exists.")
+    remote_exists: bool = Field(description="Whether the page currently exists in remote Docmost.")
+    local_exists: bool = Field(description="Whether the replica content file currently exists locally.")
+    local_changed: bool = Field(description="Whether local content differs from the last sync base.")
+    remote_changed: bool = Field(description="Whether remote content differs from the last sync base.")
+    has_conflicts: bool = Field(description="Whether local and remote changes currently clash.")
+    recommended_action: SyncRecommendedAction = Field(description="Recommended next tool or action for this page's current state.")
+    allowed_actions: list[str] = Field(default_factory=list, description="Allowed next-step actions for automation or users handling this state.")
+    base_content_hash: Optional[str] = Field(None, description="Hash of the last synchronized content base, when known.")
+    local_content_hash: Optional[str] = Field(None, description="Hash of the current local content, when available.")
+    remote_content_hash: Optional[str] = Field(None, description="Hash of the current remote content, when available.")
+
+
+class SpaceSyncStatusOut(BaseModel):
+    space: SpaceSummaryOut
+    replica_root: str = Field(description="Replica root path relative to the configured replica root base.")
+    replica_root_abs_path: str = Field(description="Absolute server-side path to the space replica root.")
+    replica_exists: bool = Field(description="Whether the space replica root currently exists on disk.")
+    generated_at: datetime
+    pipeline_expectations: list[str] = Field(default_factory=list, description="Recommended status/diff/pull/push pipeline for this replica.")
+    counts: SyncStatusCountsOut
+    pages: list[PageSyncStatusOut] = Field(default_factory=list)
+
+
+class SyncDiffHunkOut(BaseModel):
+    kind: Literal["replace", "insert", "delete"] = Field(description="Line-level diff hunk type.")
+    local_start_line: int = Field(description="1-based starting line in the local content. For inserts, this is the insertion point.")
+    local_end_line: int = Field(description="1-based ending line in the local content, or the line before the insertion point for inserts.")
+    remote_start_line: int = Field(description="1-based starting line in the remote content. For inserts, this is the insertion point.")
+    remote_end_line: int = Field(description="1-based ending line in the remote content, or the line before the insertion point for inserts.")
+    local_lines: list[str] = Field(default_factory=list, description="Local lines participating in this hunk.")
+    remote_lines: list[str] = Field(default_factory=list, description="Remote lines participating in this hunk.")
+
+
+class PageSyncDiffOut(BaseModel):
+    page_id: Optional[UUID] = Field(None, description="Remote page UUID when the page exists remotely.")
+    title: Optional[str] = Field(None, description="Best-known page title.")
+    sync_state: SyncState = Field(description="Computed sync state for the page.")
+    summary: str = Field(description="Human-readable explanation of the diff result.")
+    local_path: Optional[str] = Field(None, description="Replica content file path relative to the configured replica root base.")
+    local_abs_path: Optional[str] = Field(None, description="Absolute server-side path to the replica content file when it exists.")
+    remote_exists: bool = Field(description="Whether the page currently exists in remote Docmost.")
+    local_exists: bool = Field(description="Whether the replica content file currently exists locally.")
+    has_conflicts: bool = Field(description="Whether the diff represents a true local-vs-remote clash.")
+    hunks: list[SyncDiffHunkOut] = Field(default_factory=list, description="All differing line sections between local and remote content.")
+
+
+class SpaceSyncDiffOut(BaseModel):
+    space: SpaceSummaryOut
+    replica_root: str = Field(description="Replica root path relative to the configured replica root base.")
+    replica_root_abs_path: str = Field(description="Absolute server-side path to the space replica root.")
+    generated_at: datetime
+    pages: list[PageSyncDiffOut] = Field(default_factory=list)
+
+
+class SyncOperationResultOut(BaseModel):
+    page_id: Optional[UUID] = Field(None, description="Remote page UUID when the page exists remotely.")
+    title: Optional[str] = Field(None, description="Best-known page title.")
+    local_path: Optional[str] = Field(None, description="Replica content file path relative to the configured replica root base.")
+    local_abs_path: Optional[str] = Field(None, description="Absolute server-side path to the replica content file when it exists.")
+    sync_state_before: SyncState = Field(description="The sync state before this operation processed the page.")
+    action: str = Field(description="Action taken or attempted for this page.")
+    applied: bool = Field(description="Whether the operation actually mutated local or remote state.")
+    message: str = Field(description="Human-readable result message for this page.")
+    recommended_next_action: Optional[SyncRecommendedAction] = Field(None, description="Recommended next action when this operation was blocked or skipped.")
+    conflicts: list[SyncDiffHunkOut] = Field(default_factory=list, description="Conflict hunks returned when the operation could not proceed safely.")
+
+
+class SyncOperationOut(BaseModel):
+    space: SpaceSummaryOut
+    operation: Literal["pull", "push"] = Field(description="Which sync operation was executed.")
+    replica_root: str = Field(description="Replica root path relative to the configured replica root base.")
+    replica_root_abs_path: str = Field(description="Absolute server-side path to the space replica root.")
+    force: bool = Field(description="Whether conflict resolution was forced in favor of the operation source.")
+    generated_at: datetime
+    applied_count: int = 0
+    skipped_count: int = 0
+    conflict_count: int = 0
+    results: list[SyncOperationResultOut] = Field(default_factory=list)
