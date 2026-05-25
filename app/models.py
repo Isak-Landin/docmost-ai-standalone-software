@@ -121,11 +121,11 @@ class ReplicaStandardsOut(BaseModel):
     local_replica_requirement: str = Field(description="Whether a local replica is expected for normal client use.")
     read_source_policy: str = Field(description="How the remote Docmost source should be used for reads.")
     local_edit_policy: str = Field(description="How the local replica should be used for edits.")
-    local_truth_policy: str = Field(description="How newer local-only changes should be treated before manual sync.")
+    local_truth_policy: str = Field(description="How newer local-only changes should be treated before sync resolution.")
     remote_sync_policy: str = Field(description="How to interpret remote state after local-only replica edits.")
     edited_replica_reporting_rule: str = Field(description="How edited local replica files should be surfaced back to the user.")
     remote_page_mapping_rule: str = Field(description="How a local replica file should be mapped back to its remote Docmost page.")
-    manual_sync_prompt_rule: str = Field(description="When the client should prompt the user to sync local replica changes back to remote.")
+    manual_sync_prompt_rule: str = Field(description="When the client should surface sync-resolution guidance back to the user.")
 
     model_config = {"from_attributes": True}
 

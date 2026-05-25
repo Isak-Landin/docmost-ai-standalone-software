@@ -19,7 +19,7 @@ from app.models import (
 from app.query.docmost import get_page as fetch_page
 from app.query.docmost import list_pages as fetch_pages
 from app.query.replica import get_replica_structure
-from app.sync.diffing import build_diff_hunks, content_hash
+from app.sync.diffing import build_diff_hunks, canonicalize_content, content_hash
 from app.sync.models import ReplicaPageState
 from app.sync.storage import (
     flatten_replica_nodes,
@@ -210,10 +210,11 @@ def push_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> Sy
                 results.append(_skip_result(page_context, "push_skipped", "Local replica metadata is incomplete for a remote update.", conflict_hunks, recommended_next_action="get_sync_diff"))
                 continue
 
+            normalized_local_text = canonicalize_content(page_context.local_text)
             response = update_remote_page(
                 page_id=str(page_context.status.page_id),
                 title=page_context.meta.title,
-                content=page_context.local_text,
+                content=normalized_local_text,
                 operation="replace",
             )
             remote_page = response.get("page", response)
@@ -221,7 +222,7 @@ def push_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> Sy
                 update={
                     "title": remote_page.get("title") or page_context.meta.title,
                     "slug_id": remote_page.get("slugId") or remote_page.get("slug_id") or page_context.meta.slug_id,
-                    "base_content_hash": content_hash(page_context.local_text),
+                    "base_content_hash": content_hash(normalized_local_text),
                     "last_sync_at": datetime.utcnow(),
                     "last_sync_remote_updated_at": _coerce_datetime(remote_page.get("updatedAt") or remote_page.get("updated_at")),
                     "last_sync_title": remote_page.get("title") or page_context.meta.title,
@@ -239,10 +240,11 @@ def push_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> Sy
                 results.append(_skip_result(page_context, "push_skipped", "Local-only page is missing metadata or content.", conflict_hunks, recommended_next_action="get_sync_diff"))
                 continue
 
+            normalized_local_text = canonicalize_content(page_context.local_text)
             response = create_remote_page(
                 space_id=str(space_id),
                 title=page_context.meta.title,
-                content=page_context.local_text,
+                content=normalized_local_text,
                 parent_page_id=str(page_context.meta.parent_page_id) if page_context.meta.parent_page_id else None,
             )
             remote_page = response.get("page", response)
@@ -251,7 +253,7 @@ def push_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> Sy
                     "page_id": UUID(str(remote_page["id"])),
                     "title": remote_page.get("title") or page_context.meta.title,
                     "slug_id": remote_page.get("slugId") or remote_page.get("slug_id") or page_context.meta.slug_id,
-                    "base_content_hash": content_hash(page_context.local_text),
+                    "base_content_hash": content_hash(normalized_local_text),
                     "last_sync_at": datetime.utcnow(),
                     "last_sync_remote_updated_at": _coerce_datetime(remote_page.get("updatedAt") or remote_page.get("updated_at")),
                     "last_sync_title": remote_page.get("title") or page_context.meta.title,
@@ -660,8 +662,10 @@ def _pipeline_expectations() -> list[str]:
     return [
         "Call get_sync_status first to classify each page as local-ahead, remote-ahead, conflicted, or synced.",
         "Call get_sync_diff before any force operation or whenever the recommended action is get_sync_diff.",
+        "The server owns canonical replica structure, metadata paths, and comparison normalization. The client owns page edits, page selection, and force decisions.",
         "pull_replica is one-way: it only materializes or refreshes the server-side replica from remote Docmost. It never auto-pushes local changes first.",
         "push_replica is one-way: it only writes local replica changes to remote Docmost. It never auto-pulls remote changes first.",
+        "Content comparison is canonicalized server-side to ignore representation-only drift such as BOM, CRLF vs LF, Unicode normalization form, and trailing final-newline differences.",
         "When an operation is blocked by the current state, follow the recommended_next_action instead of retrying the same command blindly.",
     ]
 

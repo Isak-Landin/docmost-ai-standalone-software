@@ -8,6 +8,7 @@ from uuid import UUID
 
 from app.models import ReplicaStructureOut, ReplicaTreeNode
 from app.sync.config import absolute_path_to_logical, logical_path_to_absolute
+from app.sync.diffing import canonicalize_content
 from app.sync.models import (
     CANONICAL_REPLICA_GENERATED_FROM,
     LocalReplicaPaths,
@@ -94,10 +95,7 @@ def write_remote_page_snapshot(
     base_content_hash: str,
     remote_updated_at: datetime | None,
 ) -> ReplicaPageState:
-    content_abs_path = logical_path_to_absolute(node.content_file_path)
-    meta_abs_path = logical_path_to_absolute(node.meta_file_path)
-    content_abs_path.parent.mkdir(parents=True, exist_ok=True)
-    content_abs_path.write_text(content, encoding="utf-8")
+    write_content_file(node.content_file_path, content)
 
     page_state = ReplicaPageState(
         page_id=node.id,
@@ -125,7 +123,7 @@ def write_page_state(page_state: ReplicaPageState) -> ReplicaPageState:
 def write_content_file(content_file_path: str, content: str) -> None:
     content_abs_path = logical_path_to_absolute(content_file_path)
     content_abs_path.parent.mkdir(parents=True, exist_ok=True)
-    content_abs_path.write_text(content, encoding="utf-8")
+    content_abs_path.write_text(canonicalize_content(content), encoding="utf-8")
 
 
 def flatten_replica_nodes(replica_structure: ReplicaStructureOut) -> dict[UUID, ReplicaTreeNode]:

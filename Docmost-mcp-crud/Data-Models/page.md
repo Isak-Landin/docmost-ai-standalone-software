@@ -114,7 +114,7 @@ Returned by `resolve_replica_directory_name`.
 
 ## ReplicaTreeNode
 
-Represents one page in the local replica tree. Returned nested in `ReplicaStructureOut`.
+Represents one page in the server-side replica tree. Returned nested in `ReplicaStructureOut`.
 
 | Field | Type | Description |
 |---|---|---|
@@ -141,3 +141,79 @@ Returned by `get_replica_structure`.
 | `standards` | ReplicaStandardsOut | Embedded standards |
 | `root_pages` | list[ReplicaTreeNode] | Root-level replica nodes |
 | `orphan_pages` | list[ReplicaTreeNode] | Orphan replica nodes |
+
+## SyncSelectionIn
+
+Used by `pull_replica` and `push_replica` to target all pages or a subset.
+
+| Field | Type | Description |
+|---|---|---|
+| `page_ids` | list[UUID] | Optional remote page UUIDs to target |
+| `local_paths` | list[str] | Optional server-side replica paths to target, useful for local-only pages |
+| `force` | bool | Whether the operation should force its source of truth when conflicts exist |
+
+## PageSyncStatusOut
+
+Returned inside `SpaceSyncStatusOut.pages`.
+
+Key fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `page_id` | UUID? | Remote page UUID when the page exists remotely |
+| `title` | str? | Best-known title |
+| `sync_state` | literal | `synced`, `local_only_change`, `remote_only_change`, `conflicted`, `remote_only_page`, `local_only_page`, `remote_deleted`, or `local_missing` |
+| `summary` | str | Human-readable state summary |
+| `local_path` | str? | Replica-relative path to `page.md` |
+| `remote_exists` | bool | Whether the page exists in Docmost |
+| `local_exists` | bool | Whether the local content file exists |
+| `local_changed` | bool | Whether local content differs from the last sync base |
+| `remote_changed` | bool | Whether remote content differs from the last sync base |
+| `has_conflicts` | bool | Whether both sides changed |
+| `recommended_action` | literal | Next recommended tool or action |
+| `allowed_actions` | list[str] | Allowed next-step actions for automation |
+
+## SpaceSyncStatusOut
+
+Returned by `get_sync_status`.
+
+| Field | Type | Description |
+|---|---|---|
+| `space` | SpaceSummaryOut | Space summary |
+| `replica_root` | str | Replica root relative to the configured base |
+| `replica_root_abs_path` | str | Absolute server-side replica path |
+| `replica_exists` | bool | Whether the replica exists on disk |
+| `pipeline_expectations` | list[str] | Status-first sync workflow guidance |
+| `counts` | SyncStatusCountsOut | Count of pages in each sync state |
+| `pages` | list[PageSyncStatusOut] | Per-page sync state |
+
+## SyncDiffHunkOut and SpaceSyncDiffOut
+
+`get_sync_diff` returns `SpaceSyncDiffOut`, which contains one `PageSyncDiffOut` per selected page.
+Each page diff contains `SyncDiffHunkOut` entries with:
+
+- hunk kind: `replace`, `insert`, or `delete`
+- local and remote start/end line numbers
+- the local lines and remote lines participating in the hunk
+
+## SyncOperationResultOut and SyncOperationOut
+
+`pull_replica` and `push_replica` return `SyncOperationOut`.
+
+| Field | Type | Description |
+|---|---|---|
+| `operation` | literal | `pull` or `push` |
+| `force` | bool | Whether the operation forced its source of truth |
+| `applied_count` | int | Number of pages actually changed |
+| `skipped_count` | int | Number of pages skipped |
+| `conflict_count` | int | Number of pages that returned conflict hunks |
+| `results` | list[SyncOperationResultOut] | Per-page operation results |
+
+Each `SyncOperationResultOut` includes:
+
+- `sync_state_before` - the page state before the operation
+- `action` - the action taken or attempted
+- `applied` - whether the operation changed state
+- `message` - human-readable outcome
+- `recommended_next_action` - the next step to follow when the operation was blocked or skipped
+- `conflicts` - returned hunks when the operation could not proceed safely

@@ -95,18 +95,23 @@ A 404 from any write tool means the given ID does not exist in the live Docmost 
 Resolve by calling the appropriate read tool (list_spaces, list_pages) to obtain a valid ID.
 
 ## Replica management
-Maintain or create a local replica at `./{space_name}-replica/` when the client workflow allows it.
+Maintain or create a server-side replica at `./{space_name}-replica/` when the client workflow allows it.
 All local replica directory and file names must not contain spaces — replace with hyphens.
 Use get_replica_structure for the initial local replica layout.
 Use get_replica_standards and resolve_replica_directory_name for local-only additions.
 Keep canonical replica descriptors in `_replica.json`, `_tree.json`, and per-page `_meta.json`.
 Keep server-side sync bookkeeping in separate `_sync.json` files rather than redefining the replica shape.
+The server owns canonical structure, metadata paths, and comparison normalization.
+The client owns page edits, selection, and force decisions after reviewing status or diff output.
+Call get_sync_status first to classify the current state before choosing a sync action.
 Use get_sync_status to identify unsynced local or remote pages programmatically.
 Use get_sync_diff to return line-based local-vs-remote differences and all clashes.
+Use get_sync_diff before any force pull or force push decision.
 Use pull_replica to materialize or refresh the server-side replica from remote Docmost.
 Use push_replica to push local replica changes back to remote Docmost.
 pull_replica never auto-pushes local changes first.
 push_replica never auto-pulls remote changes first.
+When a sync result returns recommended_next_action, follow that next step instead of retrying the same blocked operation.
 If both local and remote changed since the last sync base, return the clashes and let the
 consuming model decide whether to force pull, force push, or ask the user.
 If content looks stale, deprecated, or inconsistent with verified behavior, say so explicitly.

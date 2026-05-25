@@ -32,6 +32,10 @@ Controlled by the `MCP_ALLOWED_HOSTS` environment variable.
 | `get_replica_standards` | _(none)_ | Get local replica naming, layout, and sync rules |
 | `resolve_replica_directory_name` | `title`, `slug_id?`, `page_id?`, `existing_dir_names?` | Resolve the local directory name for a page title |
 | `get_replica_structure` | `space_id: UUID` | Get the deterministic local replica layout for a space |
+| `get_sync_status` | `space_id: UUID`, `include_synced?: bool` | Get server-side replica sync status for a space |
+| `get_sync_diff` | `space_id: UUID`, `page_id?: UUID`, `local_path?: str`, `include_synced?: bool` | Get line-based local-vs-remote diff hunks |
+| `pull_replica` | `space_id: UUID`, `page_ids?: UUID[]`, `local_paths?: str[]`, `force?: bool` | Pull remote Docmost content into the server-side replica |
+| `push_replica` | `space_id: UUID`, `page_ids?: UUID[]`, `local_paths?: str[]`, `force?: bool` | Push server-side replica changes back to remote Docmost |
 | `list_pages` | `space_id: UUID` | List all pages in a space |
 | `get_page` | `space_id: UUID`, `page_id: UUID` | Get one page by UUID within its space |
 
@@ -65,5 +69,9 @@ The `FastMCP` instance includes a `SERVER_INSTRUCTIONS` string that guides MCP c
 - Pages are always space-scoped
 - All write tool IDs must originate from live tool responses - never inferred or invented
 - Prefer `update_page` over delete+create to preserve Docmost page history
-- If local replica changes exist, treat the local replica as the working source of truth
-- After local-only edits, remote Docmost may be stale until the user manually syncs back
+- Maintain a **server-side** replica at `./{space_name}-replica/`
+- Call `get_sync_status` first to classify local-ahead, remote-ahead, conflicting, and synced pages
+- Call `get_sync_diff` before any force pull or force push choice
+- `pull_replica` never auto-pushes first, and `push_replica` never auto-pulls first
+- If a sync result returns `recommended_next_action`, follow that next step instead of retrying blindly
+- If local and remote both changed, return clashes before forcing a sync winner

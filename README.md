@@ -560,12 +560,18 @@ Use get_replica_structure for the exact local replica layout of an existing spac
 Use get_replica_standards and resolve_replica_directory_name to derive correct directory names for new local-only pages.
 Use the replica tree mapping plus `_meta.json` to relate local replica files back to remote pages.
 
+Ownership split:
+
+- the **server** controls canonical replica structure, metadata paths, sync bookkeeping files, and comparison normalization
+- the **client** controls page edits, which pages to operate on, and whether to force a winner after reviewing status or diff output
+
 When local replica files are edited, use `get_sync_status` to discover which files changed and which remote pages they correspond to.
 Use `get_sync_diff` to return the differing sections and line numbers whenever local and remote diverge.
 Use `pull_replica` to materialize or refresh local files from remote Docmost.
 Use `push_replica` to update remote Docmost from the server-side replica.
 `pull_replica` is one-way and does not auto-push local changes first.
 `push_replica` is one-way and does not auto-pull remote changes first.
+Representation-only drift is normalized server-side before comparison so CRLF vs LF, BOM, Unicode normalization form, and final-newline differences do not create false conflicts.
 If local and remote both changed since the last sync base, return the clashes first and force push or force pull only after the consuming model has chosen a winner or asked the user.
 
 ## Docmost MCP - writing
@@ -605,6 +611,13 @@ When syncing local -> remote:
 5. Do not expect `pull_replica` to push first, and do not expect `push_replica` to pull first - blocked attempts should follow the recommended next action from sync status or operation results.
 6. If both local and remote changed, choose whether to `force` push or `force` pull only after inspecting the clash output.
 7. Never delete remote pages based solely on a missing local file without user confirmation.
+
+Sync request and response hints:
+
+- `get_sync_status(space_id, include_synced=false)` returns per-page `recommended_action`, `allowed_actions`, and space-level `pipeline_expectations`
+- `get_sync_diff(space_id, page_id?, local_path?, include_synced=false)` lets automation narrow diff inspection to one tracked page or one local replica path
+- `pull_replica` and `push_replica` accept `{"page_ids": [...], "local_paths": [...], "force": false}` so automation can target a subset instead of the whole space
+- blocked `pull_replica` or `push_replica` results return `recommended_next_action` so callers can continue the intended pipeline instead of guessing
 
 ## Naming rules (spaces)
 
@@ -769,11 +782,11 @@ The intended usage is:
 - established project direction, user decisions, and documented behavior should be read from Docmost when not fully present in the prompt
 - internal session documentation and Docmost documentation are complementary - use both
 - if the user refers to docs, documentation, a documented page, or a file/path that may be documented externally, check Docmost before guessing
-- maintain a **local replica** of documentation at `./{space_name}-replica/` for local editing
+- maintain a **server-side replica** of documentation at `./{space_name}-replica/` for local editing
 
 Recommended local-replica behavior:
 
-1. create a local replica location if it does not exist, at `./{space_name}-replica/`
+1. create a server-side replica location if it does not exist, at `./{space_name}-replica/`
 2. use `get_replica_structure(space_id)` as the source for the initial replica layout
 3. use `get_replica_standards()` and `resolve_replica_directory_name(...)` for new local-only pages not yet on remote
 4. use `get_sync_status()` to discover which local files are unsynced and how each one maps to remote Docmost
@@ -879,9 +892,12 @@ Maintain or create a server-side replica at `./{space_name}-replica/` when the c
 All local replica directory and file names must not contain spaces - replace with hyphens.
 Use get_replica_structure for the initial local replica layout.
 Use get_replica_standards and resolve_replica_directory_name for local-only additions.
+Call get_sync_status first to classify the current state before choosing a sync action.
 Use get_sync_status to identify changed files, map them to remote pages, and report whether they are local-only, remote-only, or conflicting.
 Use get_sync_diff to return differing sections and line numbers for every clash.
+Use get_sync_diff before any force pull or force push decision.
 Use pull_replica and push_replica as the primary sync workflow, and only force a winner after a deliberate resolution choice.
+When a sync result returns recommended_next_action, follow that next step instead of retrying the same blocked operation.
 If content looks stale, deprecated, or inconsistent with verified behavior, say so explicitly.
 If requested data is missing, report that explicitly instead of guessing.
 ```

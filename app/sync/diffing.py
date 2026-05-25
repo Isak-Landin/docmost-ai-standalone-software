@@ -1,19 +1,27 @@
 from __future__ import annotations
 
 import hashlib
+import unicodedata
 from difflib import SequenceMatcher
 
 from app.models import SyncDiffHunkOut
 
 
+def canonicalize_content(text: str | None) -> str:
+    normalized = (text or "").lstrip("\ufeff")
+    normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = unicodedata.normalize("NFC", normalized)
+    return "\n".join(normalized.splitlines())
+
+
 def content_hash(text: str | None) -> str:
-    normalized = text or ""
+    normalized = canonicalize_content(text)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def build_diff_hunks(local_text: str | None, remote_text: str | None) -> list[SyncDiffHunkOut]:
-    local_lines = (local_text or "").splitlines()
-    remote_lines = (remote_text or "").splitlines()
+    local_lines = canonicalize_content(local_text).splitlines()
+    remote_lines = canonicalize_content(remote_text).splitlines()
 
     matcher = SequenceMatcher(a=local_lines, b=remote_lines)
     hunks: list[SyncDiffHunkOut] = []
@@ -43,4 +51,3 @@ def _start_line(index: int) -> int:
 
 def _end_line(start_index: int, end_index: int) -> int:
     return start_index if start_index == end_index else end_index
-
