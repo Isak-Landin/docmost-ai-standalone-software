@@ -18,7 +18,7 @@ No parameters. No errors.
 
 Resolves the correct local directory name for a given page title under the current naming standard.
 
-Use this for planned local-only pages or edits that do not yet exist on remote Docmost.
+Use this when a client needs to inspect naming behavior without guessing. For actual local-only page creation, use `POST /spaces/{space_id}/sync/local-pages` so the server scaffolds the replica files.
 
 ### Query parameters
 

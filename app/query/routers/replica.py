@@ -58,16 +58,16 @@ def get_replica_directory_name(
     description=(
         "Returns the deterministic local replica layout for one space, including local directory names, "
         "nested paths, content file paths, metadata file paths, and replica-level files. "
-        "Use this instead of guessing how remote Docmost pages should be represented locally."
+        "Pass local_root when you want those paths projected into a specific local working copy."
     ),
     responses={
         404: {"description": "Space not found."},
         503: {"description": "Docmost database connection failed."},
     },
 )
-def get_replica_structure(space_id: UUID):
+def get_replica_structure(space_id: UUID, local_root: Optional[str] = None):
     try:
-        return fetch_replica_structure(space_id)
+        return fetch_replica_structure(space_id, replica_root=local_root)
     except DocmostConnectionError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except SpaceNotFoundError as exc:

@@ -22,7 +22,7 @@ remote Docmost toolset over streamable HTTP.
 | Inspect replica rules and layout | `get_replica_standards`, `resolve_replica_directory_name`, `get_replica_structure` |
 | Scaffold a local-only replica page | `create_local_replica_page` |
 | Inspect sync status and diff clashes | `get_sync_status`, `get_sync_diff` |
-| Pull or push the server-side replica | `pull_replica`, `push_replica` |
+| Pull or push a local working-copy replica | `pull_replica`, `push_replica` |
 | Create or delete spaces | `create_space`, `delete_space` |
 | Create, update, or delete pages | `create_page`, `update_page`, `delete_page` |
 
@@ -44,16 +44,16 @@ integrations, manual inspection, and non-MCP automation.
 | `GET` | `/spaces/{space_id}/pages/{page_id}` | get one page with full markdown content |
 | `GET` | `/replica/standards` | get local replica naming, structure, and sync rules |
 | `GET` | `/replica/resolve-directory-name` | resolve the correct local directory name for a page title |
-| `GET` | `/spaces/{space_id}/sync/status` | get server-side replica sync status for a space |
+| `GET` | `/spaces/{space_id}/sync/status` | get sync status for a space replica or chosen local working copy |
 | `GET` | `/spaces/{space_id}/sync/diff` | get line-based local-vs-remote diff hunks for one page or all unsynced pages |
 | `POST` | `/spaces` | create a new space |
 | `DELETE` | `/spaces/{space_id}` | permanently delete a space and all its pages |
 | `POST` | `/spaces/{space_id}/pages` | create a page (add `parent_page_id` for a child page) |
 | `PUT` | `/spaces/{space_id}/pages/{page_id}` | update a page title and/or content (markdown) |
 | `DELETE` | `/spaces/{space_id}/pages/{page_id}` | soft-delete a page |
-| `POST` | `/spaces/{space_id}/sync/local-pages` | scaffold a new local-only page in the server-side replica |
-| `POST` | `/spaces/{space_id}/sync/pull` | materialize or refresh the server-side replica from remote Docmost |
-| `POST` | `/spaces/{space_id}/sync/push` | push server-side replica changes back to remote Docmost |
+| `POST` | `/spaces/{space_id}/sync/local-pages` | scaffold a new local-only page in the chosen local working copy |
+| `POST` | `/spaces/{space_id}/sync/pull` | materialize or refresh the chosen local working copy from remote Docmost |
+| `POST` | `/spaces/{space_id}/sync/push` | push chosen local working-copy changes back to remote Docmost |
 
 Write routes authenticate against Docmost automatically using
 `DOCMOST_APP_URL`, `DOCMOST_USER_EMAIL`, and `DOCMOST_USER_PASSWORD` from
@@ -566,26 +566,28 @@ Use list_pages for a flat listing. Use get_page for a single page with full mark
 
 ## Local replica management
 
-Maintain or create a **server-side** replica at `./{space_name}-replica/` when the user asks for Docmost/local replica work or the client workflow clearly requires it.
+Maintain or create a local-first replica in the working copy you are editing. If you do not pass
+`local_root`, the service uses its default replica location at `./{space_name}-replica/`.
 No spaces are allowed in any local replica directory or file name. Replace spaces with hyphens in all local paths (e.g. "Local LLM Helper" -> `Local-LLM-Helper-replica`).
-Use get_replica_structure for the exact local replica layout of an existing space and for initial replica creation.
-Use create_local_replica_page to scaffold new local-only pages in the server-side replica.
+Use `get_replica_structure(space_id, local_root?)` for the exact local replica layout of an existing space and for initial replica creation in a chosen working copy.
+Use `create_local_replica_page(..., local_root?)` to scaffold new local-only pages in the chosen local working copy.
 Use get_replica_standards and resolve_replica_directory_name only when you need to inspect or verify naming behavior.
 Use the replica tree mapping plus `_meta.json` to relate local replica files back to remote pages.
 
 Ownership split:
 
 - the **server** controls canonical replica structure, metadata paths, sync bookkeeping files, and comparison normalization
-- the **client** controls page edits, which pages to operate on, and whether to force a winner after reviewing status or diff output
+- the **server** also enforces stale-push detection from each page's recorded sync base
+- the **client** controls which local working-copy root is active, page edits, which pages to operate on, and whether to force a winner after reviewing status or diff output
 
-When local replica files are edited, use `get_sync_status` to discover which files changed and which remote pages they correspond to.
-Use `get_sync_diff` to return the differing sections and line numbers whenever local and remote diverge.
-Use `pull_replica` to materialize or refresh local files from remote Docmost.
-Use `push_replica` to update remote Docmost from the server-side replica.
+When local replica files are edited, use `get_sync_status(space_id, local_root?)` to discover which files changed and which remote pages they correspond to.
+Use `get_sync_diff(space_id, ..., local_root?)` to return the differing sections and line numbers whenever local and remote diverge.
+Use `pull_replica(..., local_root?)` to materialize or refresh local files from remote Docmost.
+Use `push_replica(..., local_root?)` to update remote Docmost from the selected local working copy.
 `pull_replica` is one-way and does not auto-push local changes first.
 `push_replica` is one-way and does not auto-pull remote changes first.
 Representation-only drift is normalized server-side before comparison so CRLF vs LF, BOM, Unicode normalization form, and final-newline differences do not create false conflicts.
-If local and remote both changed since the last sync base, return the clashes first and force push or force pull only after the consuming model has chosen a winner or asked the user.
+If local and remote both changed since the last sync base, return the clashes first and force push or force pull only after the consuming model has chosen a winner or asked the user. This lets multiple local working copies cooperate safely: once one working copy pushes, another working copy must pull or consciously force before it can push stale content.
 
 ## Docmost MCP - writing
 
@@ -593,11 +595,11 @@ The docmost-mcp MCP server supports write operations. Auth is handled automatica
 All content is markdown in and out.
 
 Before creating a page, use get_space_tree or list_pages to check if a matching page already exists.
-Use create_local_replica_page for normal local-first page creation in the replica, then edit locally and push when ready.
+Use create_local_replica_page for normal local-first page creation in the selected working-copy replica, then edit locally and push when ready.
 Use resolve_replica_directory_name and get_replica_standards only when you need to inspect naming behavior directly.
 
 Use create_page to create a new page. Pass parent_page_id to create a nested child page.
-Use push_replica for normal local-replica sync work. Use update_page as the low-level fallback when you intentionally want to bypass the higher-level sync workflow. Prefer update_page over delete+create - Docmost preserves page history on update.
+Use push_replica for normal local-replica sync work. Whole-space sync is `push_replica(..., local_root=...)` with no page selectors. Selected-page sync is `push_replica(..., local_root=..., page_ids=[...])`. Single local-only page sync is `push_replica(..., local_root=..., local_paths=[...])`. Use update_page as the low-level fallback when you intentionally want to bypass the higher-level sync workflow. Prefer update_page over delete+create - Docmost preserves page history on update.
 Use delete_page ONLY when the user has clearly confirmed a page should be removed, or when a local edit makes it unambiguous that the page no longer exists (e.g. the local file was deliberately deleted and the user agreed). Never delete speculatively.
 Use delete_space ONLY on explicit user instruction.
 
@@ -618,21 +620,24 @@ Forbidden characters and their plain-text replacements:
 - curly quotes (" " ' ') -> use straight quotes (" and ')
 When inline text separation is needed, use a plain hyphen (-) as the separator.
 When syncing local -> remote:
-1. Call `get_sync_status` to identify which tracked pages are local-only, remote-only, conflicting, or already synced.
-2. Call `get_sync_diff` when you need the exact line-based clash details before choosing a resolution.
-3. Use `create_local_replica_page` when a brand-new local-only page needs to be scaffolded in the replica.
-4. Use `push_replica` for local-ahead changes and local-only pages.
-5. Use `pull_replica` for remote-ahead changes.
-6. Do not expect `pull_replica` to push first, and do not expect `push_replica` to pull first - blocked attempts should follow the recommended next action from sync status or operation results.
-7. If both local and remote changed, choose whether to `force` push or `force` pull only after inspecting the clash output.
-8. Never delete remote pages based solely on a missing local file without user confirmation.
+1. Choose the working-copy root first. Pass `local_root` when you want the sync to operate on a repo-local replica rather than the service default at `./{space_name}-replica/`.
+2. Call `get_sync_status` to identify which tracked pages are local-only, remote-only, conflicting, or already synced.
+3. Call `get_sync_diff` when you need the exact line-based clash details before choosing a resolution.
+4. Use `create_local_replica_page` when a brand-new local-only page needs to be scaffolded in the replica.
+5. Use `push_replica` for local-ahead changes and local-only pages.
+6. Use `pull_replica` for remote-ahead changes.
+7. Leave `page_ids` and `local_paths` empty to sync the whole space, pass `page_ids` to sync selected tracked pages, or pass `local_paths` to sync a specific local-only page.
+8. If another working copy pushed in between, the stale working copy will surface as `remote_only_change` or `conflicted` and must pull or force after reviewing the diff.
+9. Do not expect `pull_replica` to push first, and do not expect `push_replica` to pull first - blocked attempts should follow the recommended next action from sync status or operation results.
+10. If both local and remote changed, choose whether to `force` push or `force` pull only after inspecting the clash output.
+11. Never delete remote pages based solely on a missing local file without user confirmation.
 
 Sync request and response hints:
 
-- `get_sync_status(space_id, include_synced=false)` returns per-page `recommended_action`, `allowed_actions`, and space-level `pipeline_expectations`
-- `get_sync_diff(space_id, page_id?, local_path?, include_synced=false)` lets automation narrow diff inspection to one tracked page or one local replica path
-- `create_local_replica_page(space_id, title, content?, parent_page_id?, parent_local_path?)` scaffolds a canonical local-only page directory, `page.md`, and `_meta.json` without making the client hand-write replica metadata
-- `pull_replica` and `push_replica` accept `{"page_ids": [...], "local_paths": [...], "force": false}` so automation can target a subset instead of the whole space
+- `get_sync_status(space_id, include_synced=false, local_root?)` returns per-page `recommended_action`, `allowed_actions`, and space-level `pipeline_expectations`
+- `get_sync_diff(space_id, page_id?, local_path?, include_synced=false, local_root?)` lets automation narrow diff inspection to one tracked page or one local replica path; when `local_path` belongs to a single replica root, the service can infer that working-copy root automatically
+- `create_local_replica_page(space_id, title, content?, parent_page_id?, parent_local_path?, local_root?)` scaffolds a canonical local-only page directory, `page.md`, and `_meta.json` without making the client hand-write replica metadata
+- `pull_replica` and `push_replica` accept `{"local_root": "...", "page_ids": [...], "local_paths": [...], "force": false}` so automation can target a whole space, a selected set of tracked pages, or a single local-only page inside one working copy
 - blocked `pull_replica` or `push_replica` results return `recommended_next_action` so callers can continue the intended pipeline instead of guessing
 
 ## Naming rules (spaces)
@@ -656,9 +661,10 @@ With the dedicated Docmost home configured this way:
   - use Docmost as the primary **long-term** documentation source (not assumed stale)
   - use both internal session docs and Docmost - neither replaces the other
   - check whether a page already exists before creating one
-  - derive page/space names via `get_replica_standards` and `resolve_replica_directory_name`
-  - use `get_sync_status` and `get_sync_diff` to reason about the server-side replica state
-  - use `push_replica` and `pull_replica` for normal replica sync work
+  - scaffold new local-only pages via `create_local_replica_page`, and use `get_replica_standards` / `resolve_replica_directory_name` only when inspecting naming behavior
+  - use `local_root` to select the active working-copy replica when needed
+  - use `get_sync_status` and `get_sync_diff` to reason about the selected working-copy state
+  - use `push_replica` and `pull_replica` for whole-space, selected-page, or single-page replica sync work
   - use `create_page` with `parent_page_id` for nested child pages
   - **only delete** remote pages when the user has confirmed removal - never speculatively
   - return clashes before forcing a sync winner when local and remote diverge
@@ -729,7 +735,7 @@ Check:
 2. you are using `/replica/standards` or `get_replica_standards` for the shared local-replica rules
 3. you are using `/spaces/{space_id}/sync/local-pages` or `create_local_replica_page` for new local-only pages
 4. you are treating the local replica as the working source of truth only after newer local edits actually exist
-5. you are using `get_sync_status` and `get_sync_diff` to inspect server-side replica drift before forcing a sync winner
+5. you are using `get_sync_status` and `get_sync_diff` to inspect drift in the selected working copy before forcing a sync winner
 
 ### Database connection fails
 
@@ -809,27 +815,28 @@ The intended usage is:
 - established project direction, user decisions, and documented behavior should be read from Docmost when not fully present in the prompt
 - internal session documentation and Docmost documentation are complementary - use both
 - if the user refers to docs, documentation, a documented page, or a file/path that may be documented externally, check Docmost before guessing
-- maintain a **server-side replica** of documentation at `./{space_name}-replica/` for local editing
+- maintain a local-first replica in the working copy being edited; if no `local_root` is passed, use the default location at `./{space_name}-replica/`
 
 Recommended local-replica behavior:
 
-1. create a server-side replica location if it does not exist, at `./{space_name}-replica/`
-2. use `get_replica_structure(space_id)` as the source for the initial replica layout
-3. use `create_local_replica_page()` for new local-only pages not yet on remote
-4. use `get_sync_status()` to discover which local files are unsynced and how each one maps to remote Docmost
-5. use `get_sync_diff()` to inspect all differing sections and line ranges whenever local and remote diverge
-6. use `pull_replica()` to refresh missing or remote-ahead pages locally
-7. use `push_replica()` to send local-ahead or local-only pages to remote Docmost
-8. if local and remote both changed, inspect the clash output first and only then choose `force` push or `force` pull
-9. never delete remote pages based solely on a missing local file without user confirmation
+1. choose the active working-copy replica root; if omitted, the default is `./{space_name}-replica/`
+2. use `get_replica_structure(space_id, local_root?)` as the source for the initial replica layout
+3. use `create_local_replica_page(..., local_root?)` for new local-only pages not yet on remote
+4. use `get_sync_status(..., local_root?)` to discover which local files are unsynced and how each one maps to remote Docmost
+5. use `get_sync_diff(..., local_root?)` to inspect all differing sections and line ranges whenever local and remote diverge
+6. use `pull_replica(..., local_root?)` to refresh missing or remote-ahead pages locally
+7. use `push_replica(..., local_root?)` to send local-ahead or local-only pages to remote Docmost
+8. leave selectors empty for whole-space sync, pass `page_ids` for selected tracked pages, or pass `local_paths` for a single local-only page
+9. if another working copy has pushed in between, the stale working copy must pull or deliberately force after reviewing the diff
+10. never delete remote pages based solely on a missing local file without user confirmation
 
 ## Replica structure and naming standard
 
 Use the replica surfaces when you want the client to stop guessing local layout.
 
 - use `get_replica_standards()` or `GET /replica/standards` for the shared policy
-- use `get_replica_structure(space_id)` or `GET /spaces/{space_id}/replica-structure` for the full local layout of an existing remote space
-- use `create_local_replica_page(...)` or `POST /spaces/{space_id}/sync/local-pages` when creating a new local-only page in the server-side replica
+- use `get_replica_structure(space_id, local_root?)` or `GET /spaces/{space_id}/replica-structure?local_root=...` for the full local layout of an existing remote space
+- use `create_local_replica_page(...)` or `POST /spaces/{space_id}/sync/local-pages` when creating a new local-only page in the selected local working copy
 - use `resolve_replica_directory_name(...)` or `GET /replica/resolve-directory-name` only when you need to inspect naming behavior directly
 
 Replica root:
@@ -868,10 +875,11 @@ Directory naming rule:
 Sync and truth rule:
 
 - remote Docmost is the long-term authoritative documentation source - not assumed stale
-- the server-side replica is the editable working copy
+- the editable working copy is whichever replica root the client selected for the operation
 - when local replica files are edited, `get_sync_status` must call out the changed local file paths explicitly
 - when those edited files correspond to remote pages, sync status must identify the remote page title and page id
 - when local and remote diverge, `get_sync_diff` must return all differing sections and line ranges
+- when one working copy pushes before another, the stale working copy must be blocked until it pulls or intentionally forces after reviewing the diff
 - to sync: use `push_replica` and `pull_replica` as the primary workflow, and use `force` only after a deliberate resolution choice
 
 The MCP server also publishes built-in instructions (from `app/mcp_server.py` `SERVER_INSTRUCTIONS`):
@@ -916,16 +924,17 @@ A 404 from any write tool means the given ID does not exist in the live Docmost 
 Resolve by calling the appropriate read tool (list_spaces, list_pages) to obtain a valid ID.
 
 ## Replica management
-Maintain or create a server-side replica at `./{space_name}-replica/` when the client workflow allows it.
+Maintain or create a local-first replica in the working copy being edited. If local_root is omitted, use the default location at `./{space_name}-replica/`.
 All local replica directory and file names must not contain spaces - replace with hyphens.
-Use get_replica_structure for the initial local replica layout.
-Use create_local_replica_page for local-only additions.
+Use get_replica_structure(space_id, local_root?) for the initial local replica layout.
+Use create_local_replica_page(..., local_root?) for local-only additions.
 Use get_replica_standards and resolve_replica_directory_name only when you need to inspect naming behavior directly.
-Call get_sync_status first to classify the current state before choosing a sync action.
+Call get_sync_status(space_id, local_root?) first to classify the current state before choosing a sync action.
 Use get_sync_status to identify changed files, map them to remote pages, and report whether they are local-only, remote-only, or conflicting.
-Use get_sync_diff to return differing sections and line numbers for every clash.
+Use get_sync_diff(space_id, ..., local_root?) to return differing sections and line numbers for every clash.
 Use get_sync_diff before any force pull or force push decision.
-Use pull_replica and push_replica as the primary sync workflow, and only force a winner after a deliberate resolution choice.
+Use pull_replica(..., local_root?) and push_replica(..., local_root?) as the primary sync workflow. Leave selectors empty for whole-space sync, pass page_ids for selected tracked pages, or pass local_paths for a single local-only page. Only force a winner after a deliberate resolution choice.
+If one working copy pushes before another, the stale working copy must pull or intentionally force after reviewing the diff.
 When a sync result returns recommended_next_action, follow that next step instead of retrying the same blocked operation.
 If content looks stale, deprecated, or inconsistent with verified behavior, say so explicitly.
 If requested data is missing, report that explicitly instead of guessing.

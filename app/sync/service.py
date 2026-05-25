@@ -10,6 +10,7 @@ from app.models import (
     LocalReplicaPageOut,
     PageSyncDiffOut,
     PageSyncStatusOut,
+    ReplicaStructureOut,
     SpaceSummaryOut,
     SpaceSyncDiffOut,
     SpaceSyncStatusOut,
@@ -21,6 +22,7 @@ from app.models import (
 from app.query.docmost import get_page as fetch_page
 from app.query.docmost import list_pages as fetch_pages
 from app.query.replica import get_replica_structure, resolve_replica_directory_name
+from app.sync.config import absolute_path_to_logical, logical_path_to_absolute
 from app.sync.diffing import build_diff_hunks, canonicalize_content, content_hash
 from app.sync.models import LocalReplicaScan, ReplicaPageState
 from app.sync.storage import (
@@ -64,8 +66,8 @@ class LocalReplicaParentContext:
     parent_dir_path: str
 
 
-def get_sync_status(space_id: UUID, *, include_synced: bool = False) -> SpaceSyncStatusOut:
-    context = _build_sync_context(space_id)
+def get_sync_status(space_id: UUID, *, include_synced: bool = False, local_root: str | None = None) -> SpaceSyncStatusOut:
+    context = _build_sync_context(space_id, local_root=local_root)
     page_statuses = [
         page_context.status
         for page_context in context.page_contexts
@@ -89,8 +91,12 @@ def get_sync_diff(
     page_id: UUID | None = None,
     local_path: str | None = None,
     include_synced: bool = False,
+    local_root: str | None = None,
 ) -> SpaceSyncDiffOut:
-    context = _build_sync_context(space_id)
+    context = _build_sync_context(
+        space_id,
+        local_root=_resolve_local_root_override(local_root=local_root, local_paths=[local_path] if local_path else []),
+    )
     selected = _select_page_contexts(context.page_contexts, page_ids=[page_id] if page_id else [], local_paths=[local_path] if local_path else [])
 
     if not selected:
@@ -115,7 +121,7 @@ def create_local_replica_page(space_id: UUID, request: LocalReplicaPageCreateIn)
     if request.parent_page_id is not None and request.parent_local_path:
         raise ValueError("Pass either parent_page_id or parent_local_path, not both.")
 
-    replica_structure = get_replica_structure(space_id)
+    replica_structure = _resolve_replica_structure(space_id, local_root=request.local_root)
     write_replica_state(replica_structure)
     local_scan = scan_local_replica(replica_structure)
     parent_context = _resolve_parent_context(
@@ -142,8 +148,6 @@ def create_local_replica_page(space_id: UUID, request: LocalReplicaPageCreateIn)
     meta_abs_path = _logical_to_abs_string(meta_file_path)
     if content_abs_path is None or meta_abs_path is None:
         raise ValueError("Could not resolve local replica paths for the new page.")
-
-    from app.sync.config import logical_path_to_absolute
 
     if logical_path_to_absolute(content_file_path).exists() or logical_path_to_absolute(meta_file_path).exists():
         raise ValueError(f"Local replica page already exists at {local_dir_path}.")
@@ -177,13 +181,14 @@ def create_local_replica_page(space_id: UUID, request: LocalReplicaPageCreateIn)
         sync_state="local_only_page",
         recommended_next_action="push_replica",
         naming=naming,
-        message="Local-only page scaffolded in the server-side replica. Edit page.md locally, then push_replica when ready.",
+        message="Local-only page scaffolded in the selected local working copy. Edit page.md locally, then push_replica when ready.",
     )
 
 
 def pull_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> SyncOperationOut:
     selection = selection or SyncSelectionIn()
-    context = _build_sync_context(space_id)
+    local_root = _resolve_local_root_override(local_root=selection.local_root, local_paths=selection.local_paths)
+    context = _build_sync_context(space_id, local_root=local_root)
     selected = _select_page_contexts(context.page_contexts, page_ids=selection.page_ids, local_paths=selection.local_paths)
     if not selected:
         selected = context.page_contexts
@@ -218,9 +223,7 @@ def pull_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> Sy
                 )
                 write_page_state(updated_meta)
             else:
-                from app.query.replica import get_replica_structure as _fetch_replica_structure  # local import avoids stale tree after writes
-
-                replica_structure = _fetch_replica_structure(space_id)
+                replica_structure = _resolve_replica_structure(space_id, local_root=local_root)
                 desired_node = flatten_replica_nodes(replica_structure).get(status.page_id) if status.page_id else None
                 if desired_node is None:
                     results.append(_skip_result(page_context, "pull_skipped", "Could not resolve the current replica path for the remote page.", conflict_hunks, recommended_next_action="get_sync_diff"))
@@ -237,7 +240,7 @@ def pull_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> Sy
                     remote_updated_at=getattr(remote_page, "updated_at", None),
                 )
             action = "pulled_forced" if status.sync_state == "conflicted" and selection.force else "pulled"
-            message = "Remote content materialized into the server-side replica."
+            message = "Remote content materialized into the selected local working copy."
             if status.sync_state == "remote_only_page":
                 action = "materialized_local"
                 message = "Remote page materialized locally for the first time."
@@ -265,14 +268,15 @@ def pull_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> Sy
             results.append(_skip_result(page_context, "pull_skipped", "Remote page no longer exists. Inspect the conflict before deciding whether to keep or recreate the local copy.", recommended_next_action="review_remote_deletion"))
             continue
 
-    _refresh_replica_state(space_id, operation="pull", write_state=True)
+    _refresh_replica_state(space_id, operation="pull", write_state=True, local_root=local_root, local_paths=selection.local_paths)
     return _build_operation_out(context, "pull", selection.force, results, any_applied)
 
 
 def push_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> SyncOperationOut:
     selection = selection or SyncSelectionIn()
-    context = _build_sync_context(space_id)
-    current_local_scan = scan_local_replica(get_replica_structure(space_id))
+    local_root = _resolve_local_root_override(local_root=selection.local_root, local_paths=selection.local_paths)
+    context = _build_sync_context(space_id, local_root=local_root)
+    current_local_scan = scan_local_replica(_resolve_replica_structure(space_id, local_root=local_root))
     selected = _select_page_contexts(context.page_contexts, page_ids=selection.page_ids, local_paths=selection.local_paths)
     if not selected:
         selected = context.page_contexts
@@ -385,12 +389,12 @@ def push_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> Sy
             results.append(_skip_result(page_context, "push_skipped", "Local content file is missing. Pull it again or restore the file before pushing.", recommended_next_action="pull_replica"))
             continue
 
-    _refresh_replica_state(space_id, operation="push", write_state=any_applied)
+    _refresh_replica_state(space_id, operation="push", write_state=any_applied, local_root=local_root, local_paths=selection.local_paths)
     return _build_operation_out(context, "push", selection.force, results, any_applied)
 
 
-def _build_sync_context(space_id: UUID) -> SyncContext:
-    replica_structure = get_replica_structure(space_id)
+def _build_sync_context(space_id: UUID, *, local_root: str | None = None) -> SyncContext:
+    replica_structure = _resolve_replica_structure(space_id, local_root=local_root)
     local_paths = get_local_replica_paths(replica_structure)
     local_scan = scan_local_replica(replica_structure)
     remote_nodes = flatten_replica_nodes(replica_structure)
@@ -725,10 +729,20 @@ def _build_operation_out(
     )
 
 
-def _refresh_replica_state(space_id: UUID, *, operation: str, write_state: bool) -> None:
+def _refresh_replica_state(
+    space_id: UUID,
+    *,
+    operation: str,
+    write_state: bool,
+    local_root: str | None = None,
+    local_paths: Iterable[str] = (),
+) -> None:
     if not write_state and operation != "pull":
         return
-    replica_structure = get_replica_structure(space_id)
+    replica_structure = _resolve_replica_structure(
+        space_id,
+        local_root=_resolve_local_root_override(local_root=local_root, local_paths=local_paths),
+    )
     now = _utcnow()
     if operation == "pull":
         write_replica_state(replica_structure, last_pulled_at=now)
@@ -764,9 +778,9 @@ def _pipeline_expectations() -> list[str]:
     return [
         "Call get_sync_status first to classify each page as local-ahead, remote-ahead, conflicted, or synced.",
         "Call get_sync_diff before any force operation or whenever the recommended action is get_sync_diff.",
-        "The server owns canonical replica structure, metadata paths, and comparison normalization. The client owns page edits, page selection, and force decisions.",
-        "pull_replica is one-way: it only materializes or refreshes the server-side replica from remote Docmost. It never auto-pushes local changes first.",
-        "push_replica is one-way: it only writes local replica changes to remote Docmost. It never auto-pulls remote changes first.",
+        "The server owns canonical replica structure, metadata paths, comparison normalization, and stale-push detection. The client owns local working-copy location, page edits, page selection, and force decisions.",
+        "pull_replica is one-way: it only materializes or refreshes the selected local working copy from remote Docmost. It never auto-pushes local changes first.",
+        "push_replica is one-way: it only writes the selected local working copy changes to remote Docmost. It never auto-pulls remote changes first.",
         "Content comparison is canonicalized server-side to ignore representation-only drift such as BOM, CRLF vs LF, Unicode normalization form, and trailing final-newline differences.",
         "When an operation is blocked by the current state, follow the recommended_next_action instead of retrying the same command blindly.",
     ]
@@ -889,3 +903,36 @@ def _resolve_local_only_parent_page_id(meta: ReplicaPageState, local_scan: Local
         return None
     parent_meta = local_scan.page_meta_by_dir_path.get(meta.parent_local_dir_path)
     return parent_meta.page_id if parent_meta is not None else None
+
+
+def _resolve_replica_structure(space_id: UUID, *, local_root: str | None = None) -> ReplicaStructureOut:
+    return get_replica_structure(space_id, replica_root=local_root)
+
+
+def _resolve_local_root_override(*, local_root: str | None, local_paths: Iterable[str]) -> str | None:
+    if local_root:
+        return absolute_path_to_logical(logical_path_to_absolute(local_root))
+
+    inferred_roots: set[str] = set()
+    for candidate in local_paths:
+        inferred = _infer_local_root_from_path(candidate)
+        if inferred:
+            inferred_roots.add(inferred)
+
+    if len(inferred_roots) > 1:
+        raise ValueError("The selected local_paths span multiple replica roots. Pass one local_root and keep each sync operation within a single working copy.")
+    return next(iter(inferred_roots), None)
+
+
+def _infer_local_root_from_path(candidate: str | None) -> str | None:
+    if not candidate:
+        return None
+
+    path = logical_path_to_absolute(candidate)
+    cursor = path if path.is_dir() else path.parent
+    while True:
+        if (cursor / "_replica.json").exists():
+            return absolute_path_to_logical(cursor)
+        if cursor.parent == cursor:
+            return None
+        cursor = cursor.parent

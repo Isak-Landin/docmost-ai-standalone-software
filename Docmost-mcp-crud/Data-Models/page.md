@@ -114,7 +114,7 @@ Returned by `resolve_replica_directory_name`.
 
 ## ReplicaTreeNode
 
-Represents one page in the server-side replica tree. Returned nested in `ReplicaStructureOut`.
+Represents one page in a replica tree. Returned nested in `ReplicaStructureOut`.
 
 | Field | Type | Description |
 |---|---|---|
@@ -152,6 +152,7 @@ Used by `create_local_replica_page`.
 | `content` | str | Initial markdown content written to `page.md` |
 | `parent_page_id` | UUID? | Optional remote parent page UUID |
 | `parent_local_path` | str? | Optional parent local content-file path or page directory path for nesting under an existing local-only page |
+| `local_root` | str? | Optional working-copy root to scaffold instead of the default replica root |
 
 ## LocalReplicaPageOut
 
@@ -161,7 +162,7 @@ Key fields:
 
 | Field | Type | Description |
 |---|---|---|
-| `replica_root` | str | Replica root relative to the configured base |
+| `replica_root` | str | Replica root for the active local working copy |
 | `title` | str | Title of the scaffolded page |
 | `parent_page_id` | UUID? | Resolved remote parent page UUID when already known |
 | `parent_local_path` | str? | Resolved parent local directory path when nested |
@@ -179,7 +180,8 @@ Used by `pull_replica` and `push_replica` to target all pages or a subset.
 | Field | Type | Description |
 |---|---|---|
 | `page_ids` | list[UUID] | Optional remote page UUIDs to target |
-| `local_paths` | list[str] | Optional server-side replica paths to target, useful for local-only pages |
+| `local_root` | str? | Optional local working-copy root for whole-space, selected-page, or single-page sync |
+| `local_paths` | list[str] | Optional replica paths to target, useful for local-only pages |
 | `force` | bool | Whether the operation should force its source of truth when conflicts exist |
 
 ## PageSyncStatusOut
@@ -210,8 +212,8 @@ Returned by `get_sync_status`.
 | Field | Type | Description |
 |---|---|---|
 | `space` | SpaceSummaryOut | Space summary |
-| `replica_root` | str | Replica root relative to the configured base |
-| `replica_root_abs_path` | str | Absolute server-side replica path |
+| `replica_root` | str | Replica root for the active local working copy |
+| `replica_root_abs_path` | str | Absolute host path to the active local replica root |
 | `replica_exists` | bool | Whether the replica exists on disk |
 | `pipeline_expectations` | list[str] | Status-first sync workflow guidance |
 | `counts` | SyncStatusCountsOut | Count of pages in each sync state |

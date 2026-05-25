@@ -5,6 +5,7 @@ from collections import defaultdict
 from typing import Optional
 from uuid import UUID
 
+from app.sync.config import absolute_path_to_logical, logical_path_to_absolute
 from app.query.docmost import get_space_tree
 from app.models import (
     PageTreeNode,
@@ -60,11 +61,11 @@ def get_replica_standards() -> ReplicaStandardsOut:
         page_meta_file_name=PAGE_META_FILE_NAME,
         replica_meta_file_name=REPLICA_META_FILE_NAME,
         tree_cache_file_name=TREE_CACHE_FILE_NAME,
-        initial_replica_source_rule="Use `get_replica_structure(space_id)` to build or refresh the initial local replica for an existing remote space.",
-        local_addition_source_rule="Use `create_local_replica_page(space_id, ...)` to scaffold a new local-only page in the server-side replica. Use `resolve_replica_directory_name(...)` only when you need to inspect or verify naming behavior.",
-        local_replica_requirement="Maintain a server-side replica at `./{space_name}-replica/` so multiple sessions can compare, diff, pull, and push against the same remote Docmost space.",
+        initial_replica_source_rule="Use `get_replica_structure(space_id, local_root?)` together with `pull_replica(..., local_root=...)` to materialize the same replica layout in any chosen local working copy.",
+        local_addition_source_rule="Use `create_local_replica_page(space_id, ..., local_root?)` to scaffold a new local-only page in the chosen local working copy. Use `resolve_replica_directory_name(...)` only when you need to inspect or verify naming behavior.",
+        local_replica_requirement="Maintain a local-first replica in the working copy you are editing. The server may keep a default replica root, but sync must also support other local working-copy roots for the same space.",
         read_source_policy="Read remote Docmost first when there is no newer local replica state.",
-        local_edit_policy="Apply requested documentation edits to the server-side replica, keep canonical replica descriptors in `_replica.json`, `_tree.json`, and `_meta.json`, and keep sync bookkeeping in separate `_sync.json` files controlled by the sync engine.",
+        local_edit_policy="Apply requested documentation edits in the selected local working-copy replica, keep canonical replica descriptors in `_replica.json`, `_tree.json`, and `_meta.json`, and keep sync bookkeeping in separate `_sync.json` files controlled by the sync engine.",
         local_truth_policy="If newer local replica changes exist, report them through sync status and diff outputs instead of assuming either side should win automatically.",
         remote_sync_policy="When local and remote diverge, compute their differences programmatically and return all clashes before any forced overwrite.",
         edited_replica_reporting_rule="When local replica files are edited, `get_sync_status` should report which replica files changed, how they map to remote pages, and whether each change is local-only, remote-only, or conflicting.",
@@ -179,17 +180,55 @@ def _build_replica_level(nodes: list[PageTreeNode], parent_path: str) -> list[Re
     return replica_nodes
 
 
-def get_replica_structure(space_id: UUID) -> ReplicaStructureOut:
+def _normalize_replica_root(replica_root: str) -> str:
+    return absolute_path_to_logical(logical_path_to_absolute(replica_root))
+
+
+def _rebase_replica_level(nodes: list[ReplicaTreeNode], parent_path: str) -> list[ReplicaTreeNode]:
+    rebased: list[ReplicaTreeNode] = []
+    for node in nodes:
+        local_dir_path = _join_replica_path(parent_path, node.local_dir_name)
+        rebased.append(
+            ReplicaTreeNode(
+                id=node.id,
+                title=node.title,
+                slug_id=node.slug_id,
+                parent_page_id=node.parent_page_id,
+                local_dir_name=node.local_dir_name,
+                local_dir_path=local_dir_path,
+                content_file_path=f"{local_dir_path}/{PAGE_CONTENT_FILE_NAME}",
+                meta_file_path=f"{local_dir_path}/{PAGE_META_FILE_NAME}",
+                children=_rebase_replica_level(node.children, local_dir_path),
+            )
+        )
+    return rebased
+
+
+def rebase_replica_structure(replica_structure: ReplicaStructureOut, replica_root: str) -> ReplicaStructureOut:
+    normalized_root = _normalize_replica_root(replica_root)
+    return ReplicaStructureOut(
+        space=replica_structure.space,
+        replica_root=normalized_root,
+        replica_meta_file_path=f"{normalized_root}/{REPLICA_META_FILE_NAME}",
+        tree_cache_file_path=f"{normalized_root}/{TREE_CACHE_FILE_NAME}",
+        standards=replica_structure.standards,
+        root_pages=_rebase_replica_level(replica_structure.root_pages, normalized_root),
+        orphan_pages=_rebase_replica_level(replica_structure.orphan_pages, normalized_root),
+    )
+
+
+def get_replica_structure(space_id: UUID, replica_root: str | None = None) -> ReplicaStructureOut:
     space_tree = get_space_tree(space_id)
-    replica_root = _space_replica_root(space_tree.space.name or space_tree.space.slug)
+    default_replica_root = _space_replica_root(space_tree.space.name or space_tree.space.slug)
     standards = get_replica_standards()
 
-    return ReplicaStructureOut(
+    structure = ReplicaStructureOut(
         space=space_tree.space,
-        replica_root=replica_root,
-        replica_meta_file_path=f"{replica_root}/{REPLICA_META_FILE_NAME}",
-        tree_cache_file_path=f"{replica_root}/{TREE_CACHE_FILE_NAME}",
+        replica_root=default_replica_root,
+        replica_meta_file_path=f"{default_replica_root}/{REPLICA_META_FILE_NAME}",
+        tree_cache_file_path=f"{default_replica_root}/{TREE_CACHE_FILE_NAME}",
         standards=standards,
-        root_pages=_build_replica_level(space_tree.root_pages, replica_root),
-        orphan_pages=_build_replica_level(space_tree.orphan_pages, replica_root),
+        root_pages=_build_replica_level(space_tree.root_pages, default_replica_root),
+        orphan_pages=_build_replica_level(space_tree.orphan_pages, default_replica_root),
     )
+    return rebase_replica_structure(structure, replica_root=replica_root) if replica_root is not None else structure

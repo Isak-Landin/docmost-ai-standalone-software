@@ -1,15 +1,16 @@
 # Replica System
 
-The replica system defines the deterministic **server-side** file layout for any Docmost space.
+The replica system defines the deterministic local replica file layout for any Docmost space.
 `app/query/replica.py` owns the naming and layout contract, while `app/sync/` owns replica
 materialization, sync metadata, diffing, and pull/push orchestration.
 
 ## Purpose
 
-The recommended usage pattern involves maintaining a **server-side replica** - a directory tree
-that mirrors remote Docmost pages as local files. The replica system standardizes how this tree
-is laid out so all clients agree on paths, while the sync engine reports drift and performs
-pull/push operations against that same tree.
+The recommended usage pattern is local-first: maintain a replica in the working copy being edited.
+The service can still use a default root at `./{space_name}-replica`, but callers may pass a
+different `local_root` for a repo-local working copy. The replica system standardizes the tree
+shape so all clients agree on paths, while the sync engine reports drift and performs
+pull/push operations against the selected working copy.
 
 ## Replica root
 
@@ -66,22 +67,23 @@ Applied level-by-level, not globally:
 
 ## Editing policy
 
-- Apply documentation edits to the **server-side replica**, not directly to remote Docmost
-- Use `create_local_replica_page` to scaffold brand-new local-only pages so the server, not the client, owns `_meta.json` creation
+- Apply documentation edits to the selected local working-copy replica, not directly to remote Docmost
+- Use `create_local_replica_page(..., local_root?)` to scaffold brand-new local-only pages so the server, not the client, owns `_meta.json` creation
 - When local files are edited, use `get_sync_status` to report which replica files changed and which remote pages they correspond to
-- Use `push_replica` and `pull_replica` as the primary sync workflow, and only use `force` after reviewing clashes
+- Use `push_replica(..., local_root?)` and `pull_replica(..., local_root?)` as the primary sync workflow, and only use `force` after reviewing clashes
+- If one working copy pushes before another, the stale working copy must pull or deliberately force after diff review
 
 ## Using the replica tools
 
 | When | Use |
 |---|---|
-| Building or refreshing an existing remote space locally | `get_replica_structure(space_id)` |
-| Creating a new local-only page not yet on remote | `create_local_replica_page(space_id, ...)` |
+| Building or refreshing an existing remote space locally | `get_replica_structure(space_id, local_root?)` |
+| Creating a new local-only page not yet on remote | `create_local_replica_page(space_id, ..., local_root?)` |
 | Mapping a local file back to its remote page | Read `_meta.json` in the page directory |
-| Discovering which pages are out of sync | `get_sync_status(space_id)` |
-| Inspecting exact line-based clashes | `get_sync_diff(space_id, page_id?, local_path?)` |
-| Refreshing local files from remote | `pull_replica(space_id, selection)` |
-| Sending local changes to remote | `push_replica(space_id, selection)` |
+| Discovering which pages are out of sync | `get_sync_status(space_id, local_root?)` |
+| Inspecting exact line-based clashes | `get_sync_diff(space_id, page_id?, local_path?, local_root?)` |
+| Refreshing local files from remote | `pull_replica(space_id, selection)` with `selection.local_root` |
+| Sending local changes to remote | `push_replica(space_id, selection)` with `selection.local_root` |
 
 ## Implementation notes
 

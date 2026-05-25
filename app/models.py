@@ -193,12 +193,19 @@ class LocalReplicaPageCreateIn(BaseModel):
             "Accepts the parent's content file path or page directory path."
         ),
     )
+    local_root: Optional[str] = Field(
+        None,
+        description=(
+            "Optional host path to the local working-copy replica root that should be scaffolded or used for sync. "
+            "When omitted, the service uses the default configured replica root for the space."
+        ),
+    )
 
 
 class LocalReplicaPageOut(BaseModel):
     space: SpaceSummaryOut
-    replica_root: str = Field(description="Replica root path relative to the configured replica root base.")
-    replica_root_abs_path: str = Field(description="Absolute server-side path to the space replica root.")
+    replica_root: str = Field(description="Replica root path for the active local working copy.")
+    replica_root_abs_path: str = Field(description="Absolute host path to the active local replica root.")
     title: str = Field(description="Title of the newly scaffolded local-only page.")
     parent_page_id: Optional[UUID] = Field(None, description="Resolved remote parent page UUID when one is already known.")
     parent_local_path: Optional[str] = Field(None, description="Resolved local replica directory path for the parent page when nested.")
@@ -283,13 +290,23 @@ SyncRecommendedAction = Literal[
 
 
 class SyncSelectionIn(BaseModel):
+    local_root: Optional[str] = Field(
+        None,
+        description=(
+            "Optional host path to the local working-copy replica root to inspect or sync. "
+            "Use this for whole-space, selected-page, or single-page sync against a repo-local replica."
+        ),
+    )
     page_ids: list[UUID] = Field(
         default_factory=list,
         description="Optional remote page UUIDs to target. Leave empty to operate on the whole space.",
     )
     local_paths: list[str] = Field(
         default_factory=list,
-        description="Optional local replica content file paths to target. Useful for local-only pages without a remote UUID yet.",
+        description=(
+            "Optional local replica content file paths to target. Useful for local-only pages without a remote UUID yet, "
+            "or for narrowing a sync inside the selected local working-copy replica."
+        ),
     )
     force: bool = Field(
         False,
@@ -319,12 +336,12 @@ class PageSyncStatusOut(BaseModel):
     parent_page_id: Optional[UUID] = Field(None, description="Best-known parent page UUID.")
     sync_state: SyncState = Field(description="Computed sync state for the page.")
     summary: str = Field(description="Human-readable explanation of the current sync state.")
-    local_path: Optional[str] = Field(None, description="Replica content file path relative to the configured replica root base.")
-    local_abs_path: Optional[str] = Field(None, description="Absolute server-side path to the replica content file when it exists.")
+    local_path: Optional[str] = Field(None, description="Replica content file path inside the active local working copy.")
+    local_abs_path: Optional[str] = Field(None, description="Absolute host path to the replica content file when it exists.")
     desired_local_path: Optional[str] = Field(None, description="Expected replica content file path for a remote page when it has not been materialized locally yet.")
-    desired_local_abs_path: Optional[str] = Field(None, description="Absolute server-side path where the remote page would be materialized locally.")
-    meta_file_path: Optional[str] = Field(None, description="Replica metadata file path relative to the configured replica root base.")
-    meta_abs_path: Optional[str] = Field(None, description="Absolute server-side path to the replica metadata file when it exists.")
+    desired_local_abs_path: Optional[str] = Field(None, description="Absolute host path where the remote page would be materialized locally.")
+    meta_file_path: Optional[str] = Field(None, description="Replica metadata file path inside the active local working copy.")
+    meta_abs_path: Optional[str] = Field(None, description="Absolute host path to the replica metadata file when it exists.")
     remote_exists: bool = Field(description="Whether the page currently exists in remote Docmost.")
     local_exists: bool = Field(description="Whether the replica content file currently exists locally.")
     local_changed: bool = Field(description="Whether local content differs from the last sync base.")
@@ -339,8 +356,8 @@ class PageSyncStatusOut(BaseModel):
 
 class SpaceSyncStatusOut(BaseModel):
     space: SpaceSummaryOut
-    replica_root: str = Field(description="Replica root path relative to the configured replica root base.")
-    replica_root_abs_path: str = Field(description="Absolute server-side path to the space replica root.")
+    replica_root: str = Field(description="Replica root path for the active local working copy.")
+    replica_root_abs_path: str = Field(description="Absolute host path to the active local replica root.")
     replica_exists: bool = Field(description="Whether the space replica root currently exists on disk.")
     generated_at: datetime
     pipeline_expectations: list[str] = Field(default_factory=list, description="Recommended status/diff/pull/push pipeline for this replica.")
@@ -363,8 +380,8 @@ class PageSyncDiffOut(BaseModel):
     title: Optional[str] = Field(None, description="Best-known page title.")
     sync_state: SyncState = Field(description="Computed sync state for the page.")
     summary: str = Field(description="Human-readable explanation of the diff result.")
-    local_path: Optional[str] = Field(None, description="Replica content file path relative to the configured replica root base.")
-    local_abs_path: Optional[str] = Field(None, description="Absolute server-side path to the replica content file when it exists.")
+    local_path: Optional[str] = Field(None, description="Replica content file path inside the active local working copy.")
+    local_abs_path: Optional[str] = Field(None, description="Absolute host path to the replica content file when it exists.")
     remote_exists: bool = Field(description="Whether the page currently exists in remote Docmost.")
     local_exists: bool = Field(description="Whether the replica content file currently exists locally.")
     has_conflicts: bool = Field(description="Whether the diff represents a true local-vs-remote clash.")
@@ -373,8 +390,8 @@ class PageSyncDiffOut(BaseModel):
 
 class SpaceSyncDiffOut(BaseModel):
     space: SpaceSummaryOut
-    replica_root: str = Field(description="Replica root path relative to the configured replica root base.")
-    replica_root_abs_path: str = Field(description="Absolute server-side path to the space replica root.")
+    replica_root: str = Field(description="Replica root path for the active local working copy.")
+    replica_root_abs_path: str = Field(description="Absolute host path to the active local replica root.")
     generated_at: datetime
     pages: list[PageSyncDiffOut] = Field(default_factory=list)
 
@@ -382,8 +399,8 @@ class SpaceSyncDiffOut(BaseModel):
 class SyncOperationResultOut(BaseModel):
     page_id: Optional[UUID] = Field(None, description="Remote page UUID when the page exists remotely.")
     title: Optional[str] = Field(None, description="Best-known page title.")
-    local_path: Optional[str] = Field(None, description="Replica content file path relative to the configured replica root base.")
-    local_abs_path: Optional[str] = Field(None, description="Absolute server-side path to the replica content file when it exists.")
+    local_path: Optional[str] = Field(None, description="Replica content file path inside the active local working copy.")
+    local_abs_path: Optional[str] = Field(None, description="Absolute host path to the replica content file when it exists.")
     sync_state_before: SyncState = Field(description="The sync state before this operation processed the page.")
     action: str = Field(description="Action taken or attempted for this page.")
     applied: bool = Field(description="Whether the operation actually mutated local or remote state.")
@@ -395,8 +412,8 @@ class SyncOperationResultOut(BaseModel):
 class SyncOperationOut(BaseModel):
     space: SpaceSummaryOut
     operation: Literal["pull", "push"] = Field(description="Which sync operation was executed.")
-    replica_root: str = Field(description="Replica root path relative to the configured replica root base.")
-    replica_root_abs_path: str = Field(description="Absolute server-side path to the space replica root.")
+    replica_root: str = Field(description="Replica root path for the active local working copy.")
+    replica_root_abs_path: str = Field(description="Absolute host path to the active local replica root.")
     force: bool = Field(description="Whether conflict resolution was forced in favor of the operation source.")
     generated_at: datetime
     applied_count: int = 0
