@@ -1,8 +1,26 @@
 services:
+  bridge-db:
+    container_name: docmost-mcp-bridge-db
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${BRIDGE_DB_NAME}
+      POSTGRES_USER: ${BRIDGE_DB_USER}
+      POSTGRES_PASSWORD: ${BRIDGE_DB_PASSWORD}
+    volumes:
+      - bridge_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${BRIDGE_DB_USER} -d ${BRIDGE_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - docmost_network
+
   # ------------------------------------------------------------
   # Docmost MCP
   # Connects directly to the live Docmost PostgreSQL database
-  # and exposes container-hosted REST and MCP endpoints.
+  # and uses its own bridge-owned PostgreSQL database for version state.
   # ------------------------------------------------------------
   docmost-mcp:
     container_name: docmost-mcp
@@ -10,6 +28,9 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    depends_on:
+      bridge-db:
+        condition: service_healthy
     env_file: .env
     environment:
       DOCMOST_DB_HOST: ${DOCMOST_DB_HOST}
@@ -17,6 +38,11 @@ services:
       DOCMOST_DB_NAME: ${DOCMOST_DB_NAME}
       DOCMOST_DB_USER: ${DOCMOST_DB_USER}
       DOCMOST_DB_PASSWORD: ${DOCMOST_DB_PASSWORD}
+      BRIDGE_DB_HOST: ${BRIDGE_DB_HOST}
+      BRIDGE_DB_PORT: ${BRIDGE_DB_PORT}
+      BRIDGE_DB_NAME: ${BRIDGE_DB_NAME}
+      BRIDGE_DB_USER: ${BRIDGE_DB_USER}
+      BRIDGE_DB_PASSWORD: ${BRIDGE_DB_PASSWORD}
       LISTEN_HOST: ${LISTEN_HOST:-0.0.0.0}
       LISTEN_PORT: ${LISTEN_PORT:-8099}
       DOCMOST_APP_URL: ${DOCMOST_APP_URL}
@@ -26,6 +52,9 @@ services:
       - "${EXTERNAL_PORT:-8099}:${LISTEN_PORT:-8099}"
     networks:
       - docmost_network
+
+volumes:
+  bridge_db_data:
 
 networks:
   # Shared network with the live Docmost stack.

@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from typing import Iterable
 from uuid import UUID
 
+from app.bridge.errors import BridgeConflictError
+from app.bridge.services.write_pipeline import create_page_via_bridge, update_page_via_bridge
 from app.models import (
     ClientReplicaPageIn,
     LocalReplicaPageCreateIn,
@@ -29,8 +31,6 @@ from app.query.docmost import get_page as fetch_page
 from app.query.docmost import list_pages as fetch_pages
 from app.query.replica import get_replica_structure, resolve_replica_directory_name
 from app.sync.diffing import build_diff_hunks, canonicalize_content, revision_hash
-from app.write.docmost import create_page as create_remote_page
-from app.write.docmost import update_page as update_remote_page
 
 
 @dataclass
@@ -279,25 +279,37 @@ def push_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> Sy
                 continue
 
             normalized_local_text = canonicalize_content(page_context.local_text)
-            response = update_remote_page(
-                page_id=str(status.page_id),
-                title=page_context.local_title,
-                content=normalized_local_text,
-                operation="replace",
-            )
-            remote_page = response.get("page", response)
-            resolved_title = remote_page.get("title") or page_context.local_title
-            resolved_slug_id = remote_page.get("slugId") or remote_page.get("slug_id") or status.slug_id
-            resolved_parent_page_id = _coerce_uuid(remote_page.get("parentPageId") or remote_page.get("parent_page_id")) or status.parent_page_id
+            try:
+                bridge_result = update_page_via_bridge(
+                    page_id=status.page_id,
+                    title=page_context.local_title,
+                    content=normalized_local_text,
+                    operation="replace",
+                    caller_mode="auto_sync",
+                    expected_base_revision_hash=status.base_revision_hash,
+                    force=selection.force,
+                    expected_space_id=space_id,
+                )
+            except BridgeConflictError as exc:
+                results.append(
+                    _skip_result(
+                        page_context,
+                        "conflict",
+                        str(exc),
+                        conflicts=conflict_hunks,
+                        recommended_next_action="get_sync_diff",
+                    )
+                )
+                continue
             snapshot = SyncPageSnapshotOut(
                 page_id=status.page_id,
-                title=resolved_title,
-                slug_id=resolved_slug_id,
-                parent_page_id=resolved_parent_page_id,
+                title=bridge_result.title,
+                slug_id=bridge_result.slug_id,
+                parent_page_id=bridge_result.parent_page_id,
                 local_path=status.local_path,
                 meta_file_path=status.meta_file_path,
                 content=normalized_local_text,
-                base_revision_hash=revision_hash(resolved_title, normalized_local_text),
+                base_revision_hash=bridge_result.base_revision_hash,
             )
             action = "pushed_forced" if status.sync_state == "conflicted" and selection.force else "pushed"
             results.append(
@@ -336,26 +348,35 @@ def push_replica(space_id: UUID, selection: SyncSelectionIn | None = None) -> Sy
                 continue
 
             normalized_local_text = canonicalize_content(page_context.local_text)
-            response = create_remote_page(
-                space_id=str(space_id),
-                title=page_context.local_title,
-                content=normalized_local_text,
-                parent_page_id=str(parent_page_id) if parent_page_id else None,
-            )
-            remote_page = response.get("page", response)
-            created_page_id = UUID(str(remote_page["id"]))
-            resolved_title = remote_page.get("title") or page_context.local_title
-            resolved_slug_id = remote_page.get("slugId") or remote_page.get("slug_id")
-            resolved_parent_page_id = _coerce_uuid(remote_page.get("parentPageId") or remote_page.get("parent_page_id")) or parent_page_id
+            try:
+                bridge_result = create_page_via_bridge(
+                    space_id=space_id,
+                    title=page_context.local_title,
+                    content=normalized_local_text,
+                    parent_page_id=parent_page_id,
+                    caller_mode="auto_sync",
+                    expected_base_revision_hash=status.base_revision_hash,
+                    force=selection.force,
+                )
+            except BridgeConflictError as exc:
+                results.append(
+                    _skip_result(
+                        page_context,
+                        "conflict",
+                        str(exc),
+                        recommended_next_action="get_sync_diff",
+                    )
+                )
+                continue
             snapshot = SyncPageSnapshotOut(
-                page_id=created_page_id,
-                title=resolved_title,
-                slug_id=resolved_slug_id,
-                parent_page_id=resolved_parent_page_id,
+                page_id=bridge_result.page_id,
+                title=bridge_result.title,
+                slug_id=bridge_result.slug_id,
+                parent_page_id=bridge_result.parent_page_id,
                 local_path=status.local_path or status.desired_local_path,
                 meta_file_path=status.meta_file_path,
                 content=normalized_local_text,
-                base_revision_hash=revision_hash(resolved_title, normalized_local_text),
+                base_revision_hash=bridge_result.base_revision_hash,
             )
             results.append(
                 _applied_result(

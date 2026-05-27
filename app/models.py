@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.schemas.docmost_write import PageCreateIn, PageUpdateIn, SpaceCreateIn
+
 
 class SpaceOut(BaseModel):
     id: UUID = Field(description="Space UUID")
@@ -243,44 +245,6 @@ class LocalReplicaPageOut(BaseModel):
     meta_template: LocalReplicaPageMetaTemplateOut = Field(description="Canonical `_meta.json` payload the client should write.")
     sync_template: LocalReplicaPageSyncTemplateOut = Field(description="Initial local sync-state payload the client should store.")
     message: str = Field(description="Human-readable explanation of the scaffold plan.")
-
-
-# ---------------------------------------------------------------------------
-# Write request models
-# ---------------------------------------------------------------------------
-
-
-class SpaceCreateIn(BaseModel):
-    name: str = Field(min_length=2, max_length=100, description="Display name for the new space.")
-    slug: str = Field(
-        min_length=2,
-        max_length=100,
-        pattern=r"^[a-zA-Z0-9]+$",
-        description="URL-friendly identifier. Alphanumeric only, no spaces or dashes.",
-    )
-    description: Optional[str] = Field(None, description="Optional plain-text description.")
-
-
-class PageCreateIn(BaseModel):
-    title: Optional[str] = Field(None, description="Page title. Defaults to empty if omitted.")
-    content: Optional[str] = Field(None, description="Markdown content for the page body.")
-    parent_page_id: Optional[UUID] = Field(
-        None, description="UUID of the parent page. Omit for a root-level page."
-    )
-
-
-class PageUpdateIn(BaseModel):
-    title: Optional[str] = Field(None, description="New title. Unchanged if omitted.")
-    content: Optional[str] = Field(None, description="Markdown content. Unchanged if omitted.")
-    operation: Literal["replace", "append", "prepend"] = Field(
-        "replace",
-        description=(
-            "How content is applied when content is provided. "
-            "'replace' overwrites the full body (default). "
-            "'append' adds after existing content. "
-            "'prepend' adds before existing content."
-        ),
-    )
 
 
 class DeletedOut(BaseModel):

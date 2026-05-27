@@ -7,6 +7,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.fastmcp.server import TransportSecuritySettings
 
+from app.bridge.services.write_pipeline import create_page_via_bridge, delete_page_via_bridge, delete_space_via_bridge, update_page_via_bridge
 from app.query.db import DocmostConnectionError
 from app.query.docmost import (
     PageNotFoundError,
@@ -22,13 +23,10 @@ from app.models import (
     DeletedOut,
     LocalReplicaPageCreateIn,
     LocalReplicaPageOut,
-    PageCreateIn,
     PageOut,
-    PageUpdateIn,
     ReplicaNameResolutionOut,
     ReplicaStandardsOut,
     ReplicaStructureOut,
-    SpaceCreateIn,
     SpaceOut,
     SyncDiffIn,
     SyncSelectionIn,
@@ -38,12 +36,7 @@ from app.models import (
     SpaceTreeOut,
     SyncOperationOut,
 )
-from app.write.docmost import create_page as docmost_create_page
 from app.write.docmost import create_space as docmost_create_space
-from app.write.docmost import delete_page as docmost_delete_page
-from app.write.docmost import delete_space as docmost_delete_space
-from app.write.docmost import get_page_info
-from app.write.docmost import update_page as docmost_update_page
 from app.query.replica import (
     get_replica_standards as fetch_replica_standards,
     get_replica_structure as fetch_replica_structure,
@@ -56,9 +49,17 @@ from app.sync.service import (
     pull_replica as run_pull_replica,
     push_replica as run_push_replica,
 )
+from app.write.mappers import map_page_out_from_bridge_result, map_space
 
 SERVER_INSTRUCTIONS = """
-This server exposes Docmost spaces and pages for both reading and writing.
+This server exposes a bridge to Docmost spaces and pages for both reading and writing.
+
+This MCP surface is the client-facing half of a server-side bridge.
+The server owns Docmost integration, bridge state, normalization, and remote writes.
+The client or helper owns local replica file IO, working-copy selection, page edits,
+and any locally stored sync-base metadata. Do not assume the server can see or scan
+the client working copy. Provide client-local page state explicitly in replica and
+sync calls.
 
 ## Reading
 Use list_spaces to find the correct space. Use get_space_tree for page hierarchy.
@@ -68,6 +69,8 @@ Pages are always space-scoped — always pass space_id together with page_id.
 
 ## Writing
 All write tools authenticate automatically — never call an auth tool first.
+Use push_replica and pull_replica as the normal local-first workflow when the user
+is working from a client-owned replica.
 Use create_space to create a new space (slug must be alphanumeric, no dashes).
 Use create_page to create a page. Pass parent_page_id to create nested child pages.
 Use update_page to update an existing page's title and/or content.
@@ -75,6 +78,7 @@ Use update_page to update an existing page's title and/or content.
   Use operation='replace' (default) to overwrite, 'append' or 'prepend' to add content.
 Use delete_page to soft-delete a page (it moves to Docmost trash).
 Use delete_space to permanently delete a space and all its contents.
+Bridge-owned page writes are recorded in the bridge database before and after the remote Docmost write.
 All content is markdown in and out. Never pass ProseMirror JSON to write tools.
 
 Page title rules (applies to create_page and update_page):
@@ -109,8 +113,10 @@ Use get_replica_structure(space_id, local_root?) for the initial local replica l
 Use create_local_replica_page(..., local_root?, existing_dir_names=...) to get a canonical local-only page scaffold plan. The client writes the returned page.md and `_meta.json` locally.
 Use get_replica_standards and resolve_replica_directory_name to inspect or verify naming behavior when needed, not to guess local paths.
 Keep canonical replica descriptors in `_replica.json`, `_tree.json`, and per-page `_meta.json`.
-The client owns local replica file IO and local sync-base storage.
-The server owns canonical path planning, comparison normalization, diffing, and safe remote Docmost writes.
+The client owns local replica file IO, working-copy selection, and local sync-base storage.
+The server owns canonical path planning, comparison normalization, diffing, bridge
+version checks, and safe remote Docmost writes.
+Helper-driven low-context automation lives on the REST-only `/auto-mcp` surface, not as an MCP tool.
 Call get_sync_status(space_id, pages=[...], ...) first to classify the current state before choosing a sync action.
 Use get_sync_status to identify unsynced local or remote pages programmatically from the client-reported local page state.
 Use get_sync_diff(space_id, pages=[...], ...) to return line-based local-vs-remote differences and all clashes.
@@ -359,57 +365,6 @@ def get_page(space_id: UUID, page_id: UUID) -> PageOut:
         raise ToolError(str(exc)) from exc
 
 
-# ---------------------------------------------------------------------------
-# Write tools — authenticate transparently via DOCMOST_USER_* env vars
-# ---------------------------------------------------------------------------
-
-
-def _map_page_from_rest(data: dict) -> PageOut:
-    from datetime import datetime as _dt
-    from app.query.prosemirror import prosemirror_to_markdown
-
-    page = data.get("page", data)
-    raw_content = page.get("content")
-    if isinstance(raw_content, dict):
-        content = prosemirror_to_markdown(raw_content)
-    else:
-        content = raw_content
-
-    return PageOut(
-        id=page["id"],
-        slug_id=page.get("slugId") or page.get("slug_id") or "",
-        title=page.get("title"),
-        icon=page.get("icon"),
-        position=page.get("position"),
-        parent_page_id=page.get("parentPageId") or page.get("parent_page_id"),
-        creator_id=page.get("creatorId") or page.get("creator_id"),
-        last_updated_by_id=page.get("lastUpdatedById") or page.get("last_updated_by_id"),
-        space_id=page.get("spaceId") or page.get("space_id") or "",
-        workspace_id=page.get("workspaceId") or page.get("workspace_id") or "",
-        is_locked=page.get("isLocked") or page.get("is_locked") or False,
-        content=content,
-        created_at=page.get("createdAt") or page.get("created_at") or _dt.utcnow(),
-        updated_at=page.get("updatedAt") or page.get("updated_at") or _dt.utcnow(),
-    )
-
-
-def _map_space_from_rest(data: dict) -> SpaceOut:
-    from datetime import datetime as _dt
-
-    return SpaceOut(
-        id=data["id"],
-        name=data.get("name"),
-        description=data.get("description"),
-        slug=data["slug"],
-        visibility=data.get("visibility", "private"),
-        default_role=data.get("defaultRole", "writer"),
-        creator_id=data.get("creatorId"),
-        workspace_id=data["workspaceId"],
-        created_at=data.get("createdAt") or _dt.utcnow(),
-        updated_at=data.get("updatedAt") or _dt.utcnow(),
-    )
-
-
 @mcp.tool()
 def create_space(name: str, slug: str, description: str = "") -> SpaceOut:
     """Create a new Docmost space.
@@ -425,7 +380,7 @@ def create_space(name: str, slug: str, description: str = "") -> SpaceOut:
         data = docmost_create_space(name=name, slug=slug, description=description or None)
     except Exception as exc:
         raise ToolError(str(exc)) from exc
-    return _map_space_from_rest(data)
+    return map_space(data)
 
 
 @mcp.tool()
@@ -438,7 +393,7 @@ def delete_space(space_id: str) -> DeletedOut:
         space_id: UUID of the space to delete.
     """
     try:
-        docmost_delete_space(space_id)
+        delete_space_via_bridge(space_id=UUID(space_id), caller_mode="crud")
     except Exception as exc:
         raise ToolError(str(exc)) from exc
     return DeletedOut(deleted=True, id=space_id)
@@ -471,24 +426,16 @@ def create_page(
         parent_page_id: UUID of the parent page (from list_pages, get_space_tree, or an uninterrupted prior create_page); leave empty for root.
     """
     try:
-        data = docmost_create_page(
-            space_id=space_id,
+        result = create_page_via_bridge(
+            space_id=UUID(space_id),
             title=title or None,
             content=content or None,
-            parent_page_id=parent_page_id or None,
+            parent_page_id=UUID(parent_page_id) if parent_page_id else None,
+            caller_mode="crud",
         )
     except Exception as exc:
         raise ToolError(str(exc)) from exc
-
-    page_id = data.get("id") or (data.get("page", {}) or {}).get("id")
-    if not page_id:
-        raise ToolError(f"Docmost create did not return a page id. Response: {data}")
-
-    try:
-        full = get_page_info(page_id)
-    except Exception:
-        full = data
-    return _map_page_from_rest(full)
+    return map_page_out_from_bridge_result(result)
 
 
 @mcp.tool()
@@ -510,16 +457,16 @@ def update_page(
         operation: How content is applied: 'replace' (default), 'append', or 'prepend'.
     """
     try:
-        docmost_update_page(
-            page_id=page_id,
+        result = update_page_via_bridge(
+            page_id=UUID(page_id),
             title=title or None,
             content=content or None,
             operation=operation or "replace",
+            caller_mode="crud",
         )
-        full = get_page_info(page_id)
     except Exception as exc:
         raise ToolError(str(exc)) from exc
-    return _map_page_from_rest(full)
+    return map_page_out_from_bridge_result(result)
 
 
 @mcp.tool()
@@ -532,7 +479,7 @@ def delete_page(page_id: str) -> DeletedOut:
         page_id: UUID of the page to delete.
     """
     try:
-        docmost_delete_page(page_id)
+        delete_page_via_bridge(page_id=UUID(page_id), caller_mode="crud")
     except Exception as exc:
         raise ToolError(str(exc)) from exc
     return DeletedOut(deleted=True, id=page_id)

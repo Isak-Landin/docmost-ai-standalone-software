@@ -1,13 +1,27 @@
 # Docmost MCP
 
 Docmost MCP runs alongside a live Docmost deployment on the same Docker network,
-connects directly to the Docmost PostgreSQL database, and exposes that content
-through both a remote MCP endpoint for agents and a REST API for conventional
-HTTP integrations.
+reads Docmost content directly from the Docmost PostgreSQL database, keeps
+bridge-owned version state in a separate bridge PostgreSQL database, and exposes
+that bridge through both a remote MCP endpoint for agents and a REST API for
+conventional HTTP integrations.
 
 It is designed for the common setup where Docmost stays containerized on one
 server while GitHub Copilot CLI or another MCP-compatible client connects from a
 different machine.
+
+## Architectural split: server bridge vs client/helper
+
+| Surface | Owns | Must not assume |
+|---|---|---|
+| Server-side bridge (`docmost-mcp-server`) | Docmost connectivity, bridge DB state, normalization, diffing, observer runs, write intents/receipts, REST routes, and MCP tools | It does **not** own or scan the client's working copy as the source of truth |
+| Client-side MCP consumer / helper | local replica file IO, working-copy selection, page edits, locally stored sync-base metadata, and deciding when to call status/diff/pull/push/force | It does **not** bypass the bridge by talking to the Docmost codebase directly |
+
+For normal local-first documentation work, the client edits its own replica, calls
+`get_sync_status` / `get_sync_diff`, then uses `push_replica` or `pull_replica`.
+Direct `create_page`, `update_page`, and `delete_page` remain available as
+low-level remote bridge actions, but they do not move local working-copy
+ownership to the server.
 
 ## MCP capabilities
 
@@ -51,24 +65,33 @@ integrations, manual inspection, and non-MCP automation.
 | `POST` | `/spaces/{space_id}/pages` | create a page (add `parent_page_id` for a child page) |
 | `PUT` | `/spaces/{space_id}/pages/{page_id}` | update a page title and/or content (markdown) |
 | `DELETE` | `/spaces/{space_id}/pages/{page_id}` | soft-delete a page |
+| `POST` | `/auto-mcp/spaces/{space_id}/pages/apply` | helper-facing batch create/update path using bridge version checks and bridge state |
+| `POST` | `/auto-mcp/spaces/{space_id}/observe` | run one observer pass and record remote changes in bridge state |
 | `POST` | `/spaces/{space_id}/sync/local-pages` | scaffold a new local-only page in the chosen local working copy |
 | `POST` | `/spaces/{space_id}/sync/pull` | materialize or refresh the chosen local working copy from remote Docmost |
 | `POST` | `/spaces/{space_id}/sync/push` | push chosen local working-copy changes back to remote Docmost |
 
-Write routes authenticate against Docmost automatically using
-`DOCMOST_APP_URL`, `DOCMOST_USER_EMAIL`, and `DOCMOST_USER_PASSWORD` from
-`.env`. Content is markdown in and out, and the update route supports
-`operation: replace | append | prepend`.
+Bridge-tracked page writes require both the Docmost app credentials and the
+bridge database config from `.env`. Content is markdown in and out, and page
+updates support `operation: replace | append | prepend`.
 
 ## Prerequisites
 
 Before setup, make sure you have:
 
+### Server-side requirements
+
 1. a running Docmost environment with PostgreSQL - **v0.71.1 or later required** for content write operations to function correctly (see note below)
 2. Docker and Docker Compose available on the server where this service will run
 3. network access from this service container to the live Docmost PostgreSQL container
-4. network access from your Copilot CLI machine to the published Docmost MCP URL
-5. the Docmost database credentials or DSN
+4. the Docmost database credentials or DSN
+5. a separate PostgreSQL database for bridge-owned page heads, version history, receipts, and observer checkpoints
+
+### Client-side requirements
+
+1. network access from your Copilot CLI or other MCP client machine to the published Docmost MCP URL
+2. a local working copy if you plan to use the local-first replica workflow
+3. a client/helper that can send current local page state to the bridge for sync operations
 
 > **Docmost version requirement - v0.71.1+**
 >
@@ -90,7 +113,7 @@ Before setup, make sure you have:
 > docker exec docmost cat /app/apps/server/package.json | grep '"version"' | head -1
 > ```
 
-## Full setup from start to finish
+## Server-side bridge setup
 
 Two setup methods are available. Both result in the same running service.
 
@@ -106,10 +129,24 @@ Create a `docker-compose.yml`:
 
 ```yaml
 services:
+  bridge-db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${BRIDGE_DB_NAME}
+      POSTGRES_USER: ${BRIDGE_DB_USER}
+      POSTGRES_PASSWORD: ${BRIDGE_DB_PASSWORD}
+    volumes:
+      - bridge_db_data:/var/lib/postgresql/data
+    networks:
+      - docmost_network
+
   docmost-mcp:
     container_name: docmost-mcp
     image: ghcr.io/isak-landin/docmost-mcp-api:latest
     restart: unless-stopped
+    depends_on:
+      - bridge-db
     env_file: .env
     environment:
       DOCMOST_DB_HOST: ${DOCMOST_DB_HOST}
@@ -117,6 +154,11 @@ services:
       DOCMOST_DB_NAME: ${DOCMOST_DB_NAME}
       DOCMOST_DB_USER: ${DOCMOST_DB_USER}
       DOCMOST_DB_PASSWORD: ${DOCMOST_DB_PASSWORD}
+      BRIDGE_DB_HOST: ${BRIDGE_DB_HOST}
+      BRIDGE_DB_PORT: ${BRIDGE_DB_PORT}
+      BRIDGE_DB_NAME: ${BRIDGE_DB_NAME}
+      BRIDGE_DB_USER: ${BRIDGE_DB_USER}
+      BRIDGE_DB_PASSWORD: ${BRIDGE_DB_PASSWORD}
       LISTEN_HOST: ${LISTEN_HOST:-0.0.0.0}
       LISTEN_PORT: ${LISTEN_PORT:-8099}
       DOCMOST_APP_URL: ${DOCMOST_APP_URL}
@@ -131,6 +173,9 @@ networks:
   docmost_network:
     external: true
     name: ${DOCMOST_NETWORK_NAME:-docmost_default}
+
+volumes:
+  bridge_db_data:
 ```
 
 Then continue from [step 2](#2-confirm-the-shared-docker-network-name) below. Skip the build step - replace `docker compose up --build -d` with `docker compose up -d`.
@@ -209,6 +254,25 @@ DOCMOST_DB_USER=<DOCMOST_DB_USER>
 DOCMOST_DB_PASSWORD=<DOCMOST_DB_PASSWORD>
 ```
 
+#### Bridge state database
+
+The bridge also needs its own PostgreSQL database for bridge-owned state.
+Use `BRIDGE_DB_URL` if you want a single connection string:
+
+```env
+BRIDGE_DB_URL=postgresql://<BRIDGE_DB_USER>:<BRIDGE_DB_PASSWORD>@<BRIDGE_DB_HOST>:5432/<BRIDGE_DB_NAME>
+```
+
+If you do not use `BRIDGE_DB_URL`, set the individual values:
+
+```env
+BRIDGE_DB_HOST=bridge-db
+BRIDGE_DB_PORT=5432
+BRIDGE_DB_NAME=docmost_bridge
+BRIDGE_DB_USER=docmost_bridge
+BRIDGE_DB_PASSWORD=<BRIDGE_DB_PASSWORD>
+```
+
 #### API and MCP listen values
 
 These control where the container listens:
@@ -234,6 +298,13 @@ DOCMOST_DB_PORT=5432
 DOCMOST_DB_NAME=<DOCMOST_DB_NAME>
 DOCMOST_DB_USER=<DOCMOST_DB_USER>
 DOCMOST_DB_PASSWORD=<DOCMOST_DB_PASSWORD>
+
+BRIDGE_DB_URL=
+BRIDGE_DB_HOST=bridge-db
+BRIDGE_DB_PORT=5432
+BRIDGE_DB_NAME=docmost_bridge
+BRIDGE_DB_USER=docmost_bridge
+BRIDGE_DB_PASSWORD=<BRIDGE_DB_PASSWORD>
 
 DOCMOST_APP_URL=http://<DOCMOST_CONTAINER_NAME>:3000
 DOCMOST_USER_EMAIL=<YOUR_DOCMOST_USER_EMAIL>
@@ -346,8 +417,9 @@ http://<YOUR_DOCMOST_MCP_HOST>:8099/replica/standards
 
 #### Write endpoints
 
-Write routes require `DOCMOST_APP_URL` plus `DOCMOST_USER_*` in `.env`.
-Authentication is transparent, and the full route list is in
+Write routes require `DOCMOST_APP_URL`, `DOCMOST_USER_*`, and the bridge DB
+config in `.env`. Authentication is transparent, bridge state is recorded
+before and after page writes, and the full route list is in
 [REST capabilities](#rest-capabilities).
 
 ### 8. Optional: place behind HTTPS or a reverse proxy
@@ -367,7 +439,12 @@ Example placeholder public URL:
 https://<YOUR_DOCMOST_MCP_HOST>/mcp
 ```
 
-## GitHub Copilot CLI setup
+## Client-side GitHub Copilot CLI setup
+
+Everything above is server-side deployment. The Copilot CLI machine does not run
+the bridge codebase or host the Docmost integration itself - it only connects to
+the already-running remote bridge and manages a local working copy when replica
+sync is needed.
 
 Because the MCP endpoint is remote and container-hosted, your GitHub Copilot CLI
 machine does **not** need any local wrapper script for Docmost MCP.
@@ -524,6 +601,13 @@ Clarification. Internal documentation is not docs that exist in the repository y
 - Always verify that other code, module or package does not exist as owner of wanted implementation. Since we never want to duplicate codebase responsibilities.
 - Only make additions or creations when required to keep project codebase integrity or required as a result of avoidance to mix ownership.
 - Don't guess or invent new rules or module ownerships.
+
+## Surface split
+
+- the remote `docmost-mcp` service is the server-side bridge; it owns Docmost auth/integration, bridge DB state, normalization, comparison, and remote writes
+- the Copilot CLI machine is the client; it owns local replica file IO, working-copy selection, page edits, and any locally stored sync-base metadata
+- do not assume the server can see or scan the client filesystem; pass current client-local page state explicitly in replica and sync calls
+- use `push_replica` and `pull_replica` as the normal local-first workflow; direct `create_page`, `update_page`, and `delete_page` are low-level remote bridge actions, not the default replacement for a client-owned replica
 
 ## Repo and runtime workflow
 
@@ -869,6 +953,12 @@ The MCP server also publishes built-in instructions (from `app/mcp_server.py` `S
 ```text
 This server exposes Docmost spaces and pages for both reading and writing.
 
+This MCP surface is the client-facing half of a server-side bridge.
+The server owns Docmost integration, bridge state, normalization, and remote
+writes. The client or helper owns local replica file IO, working-copy
+selection, page edits, and any locally stored sync-base metadata.
+Do not assume the server can see or scan the client working copy.
+
 ## Reading
 Use list_spaces to find the correct space. Use get_space_tree for page hierarchy.
 Use list_pages for a flat page list. Use get_page for a single page with markdown content.
@@ -877,6 +967,8 @@ Pages are always space-scoped - always pass space_id together with page_id.
 
 ## Writing
 All write tools authenticate automatically - never call an auth tool first.
+Use push_replica and pull_replica as the normal local-first workflow when the
+user is working from a client-owned replica.
 Use create_space to create a new space (slug must be alphanumeric, no dashes).
 Use create_page to create a page. Pass parent_page_id to create nested child pages.
 Use update_page to update an existing page's title and/or content.
@@ -911,6 +1003,8 @@ All local replica directory and file names must not contain spaces - replace wit
 Use get_replica_structure(space_id, local_root?) for the initial local replica layout.
 Use create_local_replica_page(..., local_root?, existing_dir_names=...) to plan local-only additions.
 Use get_replica_standards and resolve_replica_directory_name only when you need to inspect naming behavior directly.
+The client owns local replica file IO, working-copy selection, and locally stored sync-base metadata.
+The server owns canonical replica planning, normalization, version checks, and safe Docmost writes.
 Call get_sync_status(space_id, pages=[...], ...) first to classify the current state before choosing a sync action.
 Use get_sync_status to identify changed client-local pages, map them to remote pages, and report whether they are local-only, remote-only, or conflicting.
 Use get_sync_diff(space_id, pages=[...], ...) to return differing sections and line numbers for every clash.

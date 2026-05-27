@@ -1,0 +1,1 @@
+"""Bridge-owned shared services."""

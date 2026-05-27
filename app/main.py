@@ -3,6 +3,7 @@ import os
 
 from fastapi import FastAPI
 
+from app.auto_mcp import routers as auto_mcp
 from app.mcp_server import mcp
 from app.query.routers import health, pages, replica, spaces
 from app.sync import routers as sync
@@ -19,8 +20,8 @@ async def app_lifespan(_: FastAPI):
 app = FastAPI(
     title="Docmost MCP",
     description=(
-        "REST and MCP service for Docmost. "
-        "Exposes spaces and pages via read (direct DB) and write (Docmost REST API) routes."
+        "REST and MCP bridge for Docmost. "
+        "Exposes Docmost reads, bridge-owned writes, sync routes, and helper automation routes."
     ),
     version="1.0.0",
     lifespan=app_lifespan,
@@ -29,6 +30,7 @@ app = FastAPI(
 app.include_router(health.router)
 app.include_router(replica.router)
 app.include_router(sync.router)
+app.include_router(auto_mcp.router)
 # Query (read) routes — backed by direct PostgreSQL access
 app.include_router(spaces.router)
 app.include_router(pages.router)

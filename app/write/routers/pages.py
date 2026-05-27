@@ -2,11 +2,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 
-from app.models import DeletedOut, PageCreateIn, PageMetaOut, PageUpdateIn
-from app.write.docmost import create_page as docmost_create_page
-from app.write.docmost import delete_page as docmost_delete_page
-from app.write.docmost import get_page_info
-from app.write.docmost import update_page as docmost_update_page
+from app.bridge.errors import BridgeConflictError, BridgeStateError
+from app.bridge.services.write_pipeline import create_page_via_bridge, delete_page_via_bridge, update_page_via_bridge
+from app.models import DeletedOut, PageMetaOut
+from app.schemas.docmost_write import PageCreateIn, PageUpdateIn
+from app.write.mappers import map_page_meta
 
 router = APIRouter(prefix="/spaces/{space_id}/pages", tags=["pages"])
 
@@ -32,21 +32,20 @@ router = APIRouter(prefix="/spaces/{space_id}/pages", tags=["pages"])
 )
 def create_page(space_id: UUID, body: PageCreateIn):
     try:
-        data = docmost_create_page(
-            space_id=str(space_id),
+        result = create_page_via_bridge(
+            space_id=space_id,
             title=body.title,
             content=body.content,
-            parent_page_id=str(body.parent_page_id) if body.parent_page_id else None,
+            parent_page_id=body.parent_page_id,
+            caller_mode="crud",
         )
+        return map_page_meta(result.remote_page)
+    except BridgeConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BridgeStateError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
         _raise_for_docmost_error(exc)
-
-    page = data.get("page", data)
-    page_id = page.get("id")
-    if not page_id:
-        raise HTTPException(status_code=502, detail=f"Docmost create did not return a page id. Response: {data}")
-
-    return _map_page_meta(page)
 
 
 @router.put(
@@ -70,21 +69,21 @@ def create_page(space_id: UUID, body: PageCreateIn):
 )
 def update_page(space_id: UUID, page_id: UUID, body: PageUpdateIn):
     try:
-        docmost_update_page(
-            page_id=str(page_id),
+        result = update_page_via_bridge(
+            page_id=page_id,
             title=body.title,
             content=body.content,
             operation=body.operation,
+            caller_mode="crud",
+            expected_space_id=space_id,
         )
+        return map_page_meta(result.remote_page)
+    except BridgeConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BridgeStateError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
         _raise_for_docmost_error(exc)
-
-    try:
-        full = get_page_info(str(page_id))
-    except Exception as exc:
-        _raise_for_docmost_error(exc)
-
-    return _map_page_meta(full.get("page", full))
 
 
 @router.delete(
@@ -102,7 +101,11 @@ def update_page(space_id: UUID, page_id: UUID, body: PageUpdateIn):
 )
 def delete_page(space_id: UUID, page_id: UUID):
     try:
-        docmost_delete_page(str(page_id))
+        delete_page_via_bridge(page_id=page_id, caller_mode="crud", expected_space_id=space_id)
+    except BridgeConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BridgeStateError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
         _raise_for_docmost_error(exc)
     return DeletedOut(deleted=True, id=str(page_id))
@@ -124,24 +127,3 @@ def _raise_for_docmost_error(exc: Exception) -> None:
             detail = exc.response.text
         raise HTTPException(status_code=status, detail=detail) from exc
     raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-
-def _map_page_meta(page: dict) -> PageMetaOut:
-    """Map a Docmost page response dict to PageMetaOut (no content)."""
-    from datetime import datetime, timezone
-
-    return PageMetaOut(
-        id=page["id"],
-        slug_id=page.get("slugId") or page.get("slug_id") or "",
-        title=page.get("title"),
-        icon=page.get("icon"),
-        position=page.get("position"),
-        parent_page_id=page.get("parentPageId") or page.get("parent_page_id"),
-        creator_id=page.get("creatorId") or page.get("creator_id"),
-        last_updated_by_id=page.get("lastUpdatedById") or page.get("last_updated_by_id"),
-        space_id=page.get("spaceId") or page.get("space_id"),
-        workspace_id=page.get("workspaceId") or page.get("workspace_id"),
-        is_locked=page.get("isLocked") or page.get("is_locked") or False,
-        created_at=page.get("createdAt") or page.get("created_at") or datetime.now(timezone.utc),
-        updated_at=page.get("updatedAt") or page.get("updated_at") or datetime.now(timezone.utc),
-    )

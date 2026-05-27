@@ -3,9 +3,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 
-from app.models import DeletedOut, SpaceCreateIn, SpaceOut
+from app.bridge.services.write_pipeline import delete_space_via_bridge
+from app.models import DeletedOut, SpaceOut
+from app.schemas.docmost_write import SpaceCreateIn
 from app.write.docmost import create_space as docmost_create_space
-from app.write.docmost import delete_space as docmost_delete_space
+from app.write.mappers import map_space
 
 router = APIRouter(prefix="/spaces", tags=["spaces"])
 
@@ -34,7 +36,7 @@ def create_space(body: SpaceCreateIn):
         )
     except Exception as exc:
         _raise_for_docmost_error(exc)
-    return _map_space(data)
+    return map_space(data)
 
 
 @router.delete(
@@ -52,7 +54,7 @@ def create_space(body: SpaceCreateIn):
 )
 def delete_space(space_id: UUID):
     try:
-        docmost_delete_space(str(space_id))
+        delete_space_via_bridge(space_id=space_id, caller_mode="crud")
     except Exception as exc:
         _raise_for_docmost_error(exc)
     return DeletedOut(deleted=True, id=str(space_id))
@@ -74,21 +76,3 @@ def _raise_for_docmost_error(exc: Exception) -> None:
             detail = exc.response.text
         raise HTTPException(status_code=status, detail=detail) from exc
     raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-
-def _map_space(data: dict) -> SpaceOut:
-    """Map a Docmost space response dict to SpaceOut."""
-    from datetime import datetime, timezone
-
-    return SpaceOut(
-        id=data["id"],
-        name=data.get("name"),
-        description=data.get("description"),
-        slug=data["slug"],
-        visibility=data.get("visibility", "private"),
-        default_role=data.get("defaultRole", "writer"),
-        creator_id=data.get("creatorId"),
-        workspace_id=data["workspaceId"],
-        created_at=data.get("createdAt") or datetime.now(timezone.utc),
-        updated_at=data.get("updatedAt") or datetime.now(timezone.utc),
-    )
