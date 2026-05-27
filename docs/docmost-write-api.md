@@ -275,6 +275,83 @@ The current sync surfaces are stateless with respect to local file IO:
 - `pull_replica` returns canonical remote snapshots for the client to write locally
 - `push_replica` writes only to remote Docmost, using the same Docmost entrypoints documented above
 
+### Current client-side findings
+
+These findings replace the earlier working assumptions about repo-root whole-space sync.
+
+#### Confirmed intended behavior
+
+When the client supplies a real page entry inside `pages=[...]`, the server does use that
+client-reported page state.
+
+Observed with `Admin/Admin-Flows/page.md`:
+
+- `get_sync_status(...)` marked that supplied page as:
+  - `sync_state: "conflicted"`
+  - `summary: "Client-local and remote Docmost differ, and no common sync base was provided."`
+  - `local_exists: true`
+  - `local_changed: true`
+  - `remote_changed: true`
+  - `allowed_actions: ["get_sync_diff", "pull_replica(force)", "push_replica(force)"]`
+- At the same time, every page **not** included in `pages=[...]` was correctly reported as
+  `remote_only_page`.
+
+This means the current API expectation is:
+
+- `local_root` only helps with suggested path projection
+- the actual local working-copy state must be sent explicitly in `pages=[...]`
+- non-force push requires a usable `base_revision_hash` when local and remote already differ
+
+The sync classification in `app/sync/service.py` is explicit here:
+
+- if `local_revision_hash == remote_revision_hash` -> `synced`
+- if local and remote differ **and** `base_revision_hash` is missing -> `conflicted`
+- only when `base_revision_hash` is present can the engine distinguish
+  `local_only_change` from `remote_only_change`
+
+That means a valid client-driven non-force whole-space push depends on client-side
+sync-base persistence. A replica containing only `_meta.json` + `page.md` content
+without stored base revision hashes is not enough for a safe non-force overwrite
+when the remote pages already exist and differ.
+
+#### Current alpha bug
+
+The non-force push path was crashing in the MCP wrapper instead of returning a structured blocked result.
+
+Observed call:
+
+- `push_replica(space_id=..., force=false, pages=[<real Admin Flows page state>])`
+
+Observed response:
+
+- `Error executing tool push_replica: name 'SyncSelectionIn' is not defined`
+
+Root cause identified in code:
+
+- `app/mcp_server.py` used `SyncSelectionIn(...)` inside the `pull_replica` and
+  `push_replica` MCP tool wrappers without importing `SyncSelectionIn` from
+  `app.models`
+- this is a wrapper-level NameError, not a sync-engine classification result
+- local fix: add `SyncSelectionIn` to the `from app.models import (...)` list in
+  `app/mcp_server.py`
+
+#### Why this matters
+
+For a normal client-driven sync, the expected behavior after the conflict classification would be
+one of:
+
+1. a normal blocked response explaining that a non-force push cannot proceed without a common base
+2. a structured conflict result instructing the client to call `get_sync_diff`
+
+Instead, the server raises a runtime error before returning a proper sync decision.
+
+#### Practical impact right now
+
+- Whole-space non-force sync from the current client replica is not ready unless the client can
+  supply the full `pages=[...]` set **and** recorded `base_revision_hash` values for those pages.
+- Even for a single supplied page, the current `push_replica` implementation can fail with the
+  `SyncSelectionIn` runtime error before completing the normal conflict-handling path.
+
 ---
 
 ## Error responses

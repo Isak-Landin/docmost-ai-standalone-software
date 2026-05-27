@@ -31,6 +31,7 @@ from app.models import (
     SpaceCreateIn,
     SpaceOut,
     SyncDiffIn,
+    SyncSelectionIn,
     SyncStatusIn,
     SpaceSyncDiffOut,
     SpaceSyncStatusOut,
