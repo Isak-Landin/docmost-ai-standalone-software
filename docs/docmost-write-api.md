@@ -352,6 +352,32 @@ Instead, the server raises a runtime error before returning a proper sync decisi
 - Even for a single supplied page, the current `push_replica` implementation can fail with the
   `SyncSelectionIn` runtime error before completing the normal conflict-handling path.
 
+#### Direct MCP whole-space push test using only `space_id`
+
+Observed call:
+
+- `push_replica(space_id=..., local_root="/home/isakuser/HostNodex/hostnodexdocs-replica", force=false)`
+- no `pages=[...]` payload supplied
+
+Observed response summary:
+
+- `applied_count: 0`
+- `skipped_count: 70`
+- `conflict_count: 0`
+- every listed page came back as:
+  - `sync_state_before: "remote_only_page"`
+  - `action: "push_skipped"`
+  - `message: "Remote page has not been included in the current client-local page set. Pull it or pass the local page state before pushing."`
+  - `recommended_next_action: "pull_replica"`
+
+This confirms an important operational limitation in the current MCP surface:
+
+- `space_id` plus `local_root` is **not** enough to make `push_replica` auto-scan and sync a whole local replica
+- the MCP still requires the client-local page set to be passed explicitly in `pages=[...]`
+- without that payload, the server treats the pages as not included in the current client-local page set and skips the push instead of auto-completing it
+
+So if the desired UX is "point at a space id and local replica root and let the MCP finish the whole sync automatically", that behavior is not implemented by the current write/sync contract.
+
 ---
 
 ## Error responses
