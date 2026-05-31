@@ -83,3 +83,16 @@ class ObserverCheckpointRecord:
     last_observed_revision_hash: str | None
     last_checked_at: datetime
     updated_at: datetime
+
+
+@dataclass(frozen=True)
+class LocalPageSnapshotRecord:
+    id: UUID
+    page_id: UUID
+    space_id: UUID
+    local_path: str | None
+    content: str
+    base_revision_hash: str | None
+    snapshotted_at: datetime
+    status: str
+    created_at: datetime

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "docmost-helper": {
+      "type": "stdio",
+      "command": "/home/isakuser/docmost-mcp-server/helper/.venv/bin/python3",
+      "args": ["/home/isakuser/docmost-mcp-server/helper/server.py"]
+    },
+    "discord-mcp": {
+      "type": "http",
+      "url": "http://localhost:8085/mcp"
+    }
+  }
+}

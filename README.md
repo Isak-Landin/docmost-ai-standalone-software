@@ -1061,6 +1061,53 @@ Columns exposed: `id`, `slug_id`, `title`, `icon`, `position`, `parent_page_id`,
 
 Deleted Docmost rows are excluded by checking `deleted_at IS NULL`.
 
+---
+
+## Client-side setup: Claude Code
+
+The recommended client for this server is the **docmost-helper** stdio MCP, which handles local replica file IO, sync workflows, and stash operations. The consuming model calls the helper for all Docmost operations.
+
+### 1. Set up the helper venv
+
+```bash
+cd helper
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp .env.example .env
+# Set DOCMOST_MCP_SERVER_URL in helper/.env
+```
+
+### 2. Register in `.mcp.json`
+
+The repo root already contains `.mcp.json`. Add the helper stdio entry:
+
+```json
+{
+  "mcpServers": {
+    "docmost-helper": {
+      "type": "stdio",
+      "command": "/absolute/path/to/docmost-mcp-server/helper/.venv/bin/python3",
+      "args": ["/absolute/path/to/docmost-mcp-server/helper/server.py"]
+    }
+  }
+}
+```
+
+The helper is additive — it loads alongside the `discord-mcp` entry already in `.mcp.json` and any MCPs registered in your Claude home config.
+
+### 3. Normal operation
+
+Once the helper is registered, the model uses `docmost-helper` tools for all operations:
+
+- **Reads**: `list_spaces`, `get_space`, `get_space_tree`, `list_pages`, `get_page`
+- **Writes**: `create_page`, `update_page`, `delete_page`, `create_space`, `delete_space`
+- **Sync**: `sync_space`, `push_pages`, `pull_pages`, `accept_remote`
+- **Conflict resolution**: `stash_page` → `accept_remote` → `get_stash` → merge → `push_pages` → `clear_stash`
+
+The server-side `docmost-mcp` HTTP MCP remains available for direct inspection and manual override.
+
+---
+
 ## Known issues
 
 **Page title duplication (fixed)** — `create_page` and `update_page` both pass `title` as

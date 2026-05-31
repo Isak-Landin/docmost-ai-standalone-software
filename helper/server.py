@@ -1,0 +1,211 @@
+from __future__ import annotations
+
+import sys
+import os
+
+# Allow importing the helper package from the same directory
+sys.path.insert(0, os.path.dirname(__file__))
+
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+
+from typing import Optional
+from uuid import UUID
+
+from mcp.server.fastmcp import FastMCP
+
+from helper import client, sync
+
+mcp = FastMCP(
+    "docmost-helper",
+    instructions=(
+        "Client-side helper for Docmost sync and write operations. "
+        "Use this server for all Docmost operations — reads, writes, and sync. "
+        "Never call the server-side docmost-mcp MCP directly for normal workflows; "
+        "use these tools instead. "
+        "For conflict resolution: stash_page → accept_remote → get_stash → merge → push_pages → clear_stash."
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
+# Read tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def list_spaces() -> list[dict]:
+    """List all Docmost spaces."""
+    return client.list_spaces()
+
+
+@mcp.tool()
+def get_space(space_id: str) -> dict:
+    """Get a single Docmost space by UUID."""
+    return client.get_space(UUID(space_id))
+
+
+@mcp.tool()
+def get_space_tree(space_id: str) -> dict:
+    """Get the full page hierarchy for a space."""
+    return client.get_space_tree(UUID(space_id))
+
+
+@mcp.tool()
+def list_pages(space_id: str) -> list[dict]:
+    """List all pages in a Docmost space."""
+    return client.list_pages(UUID(space_id))
+
+
+@mcp.tool()
+def get_page(space_id: str, page_id: str) -> dict:
+    """Get a single page with markdown content and current revision hash."""
+    return client.get_page(UUID(space_id), UUID(page_id))
+
+
+# ---------------------------------------------------------------------------
+# Write tools — spaces
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def create_space(name: str, slug: str) -> dict:
+    """Create a new Docmost space. slug must be alphanumeric, no dashes."""
+    return client.create_space(name, slug)
+
+
+@mcp.tool()
+def delete_space(space_id: str) -> None:
+    """Permanently delete a space and all its pages. Irreversible."""
+    client.delete_space(UUID(space_id))
+
+
+# ---------------------------------------------------------------------------
+# Write tools — pages
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def create_page(
+    space_id: str,
+    title: str,
+    content: Optional[str] = None,
+    parent_page_id: Optional[str] = None,
+) -> dict:
+    """Create a new page in a Docmost space."""
+    return client.create_page(
+        UUID(space_id),
+        title=title,
+        content=content,
+        parent_page_id=UUID(parent_page_id) if parent_page_id else None,
+    )
+
+
+@mcp.tool()
+def update_page(
+    space_id: str,
+    page_id: str,
+    title: Optional[str] = None,
+    content: Optional[str] = None,
+    operation: str = "replace",
+    base_revision_hash: Optional[str] = None,
+    force: bool = False,
+) -> dict:
+    """Update a page's title and/or content. operation: replace | append | prepend."""
+    return client.update_page(
+        UUID(space_id),
+        UUID(page_id),
+        title=title,
+        content=content,
+        operation=operation,
+        base_revision_hash=base_revision_hash,
+        force=force,
+    )
+
+
+@mcp.tool()
+def delete_page(space_id: str, page_id: str) -> None:
+    """Delete a page. Moves it to Docmost trash."""
+    client.delete_page(UUID(space_id), UUID(page_id))
+
+
+# ---------------------------------------------------------------------------
+# Sync tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def sync_space(space_id: str, local_root: Optional[str] = None) -> dict:
+    """Full space sync: push all local pages, pull all remote-only pages."""
+    return sync.sync_space(UUID(space_id), local_root=local_root)
+
+
+@mcp.tool()
+def push_pages(
+    space_id: str,
+    local_paths: list[str],
+    local_root: Optional[str] = None,
+) -> dict:
+    """Push specific local pages to Docmost via the bridge write pipeline.
+    Returns applied and drifted pages together in results[]. Check applied=False / action='drifted' for conflicts."""
+    return sync.push_pages(UUID(space_id), local_paths=local_paths, local_root=local_root)
+
+
+@mcp.tool()
+def pull_pages(
+    space_id: str,
+    page_ids: Optional[list[str]] = None,
+    local_paths: Optional[list[str]] = None,
+    local_root: Optional[str] = None,
+) -> dict:
+    """Pull remote pages and write them to the local replica.
+    Use page_ids to pull specific remote pages (creating new local files if needed).
+    Use local_paths to refresh existing tracked local pages from remote."""
+    return sync.pull_pages(
+        UUID(space_id),
+        page_ids=page_ids,
+        local_paths=local_paths,
+        local_root=local_root,
+    )
+
+
+@mcp.tool()
+def accept_remote(
+    space_id: str,
+    page_id: str,
+    local_path: str,
+    local_root: Optional[str] = None,
+) -> dict:
+    """Overwrite local page.md and _meta.json with the current remote version.
+    Use during conflict resolution after stash_page has saved local content."""
+    return sync.accept_remote(
+        UUID(space_id),
+        UUID(page_id),
+        local_path=local_path,
+        local_root=local_root,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stash tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def stash_page(space_id: str, page_id: str, local_path: str) -> dict:
+    """Save current local page.md as a server-side snapshot before overwriting.
+    Updates _meta.json with active_snapshot tracking for auto-expiry.
+    Returns snapshot_id — hold this for the duration of conflict resolution."""
+    return sync.create_stash(UUID(space_id), UUID(page_id), local_path)
+
+
+@mcp.tool()
+def get_stash(space_id: str, page_id: str, snapshot_id: str) -> dict:
+    """Retrieve a previously stashed page snapshot by snapshot_id."""
+    return client.get_snapshot(UUID(space_id), UUID(page_id), snapshot_id)
+
+
+@mcp.tool()
+def clear_stash(space_id: str, page_id: str, snapshot_id: str, local_path: Optional[str] = None) -> None:
+    """Mark a snapshot as consumed and remove active_snapshot tracking from _meta.json.
+    Call after conflict resolution is complete. Pass local_path to clean up _meta.json."""
+    sync.consume_stash(UUID(space_id), UUID(page_id), snapshot_id, local_path=local_path)
+
+
+if __name__ == "__main__":
+    mcp.run()

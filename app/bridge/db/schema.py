@@ -17,9 +17,10 @@ def ensure_schema() -> None:
     with _SCHEMA_LOCK:
         if _SCHEMA_READY:
             return
-        sql_path = Path(__file__).resolve().parents[3] / "migrations" / "bridge" / "001_initial.sql"
-        sql = sql_path.read_text(encoding="utf-8")
+        migrations_dir = Path(__file__).resolve().parents[3] / "migrations" / "bridge"
+        sql_files = sorted(migrations_dir.glob("*.sql"))
         with get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute(sql)
+                for sql_path in sql_files:
+                    cur.execute(sql_path.read_text(encoding="utf-8"))
         _SCHEMA_READY = True

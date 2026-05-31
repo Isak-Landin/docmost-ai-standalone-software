@@ -52,11 +52,27 @@ from app.sync.service import (
 from app.write.mappers import map_page_out_from_bridge_result, map_space
 
 SERVER_INSTRUCTIONS = """
+## IMPORTANT: Use the docmost-helper MCP for all normal operations
+
+If the docmost-helper stdio MCP is available in your session, use it for all Docmost
+operations — reads, writes, and sync. The helper owns local replica file IO and
+provides the correct sync contract with the server.
+
+Only call tools on this server (docmost-mcp) directly when:
+- The helper is unavailable (fallback / manual override)
+- You need direct inspection of bridge state (get_sync_status, get_sync_diff)
+- You are performing a single targeted read without a local replica
+
+The helper calls this server via REST (/helper/v1/ and /auto-mcp/) — never via this MCP
+surface. Do not instruct the helper to call /mcp.
+
+---
+
 This server exposes a bridge to Docmost spaces and pages for both reading and writing.
 
-This MCP surface is the client-facing half of a server-side bridge.
+This MCP surface is the server-side half of a bridge.
 The server owns Docmost integration, bridge state, normalization, and remote writes.
-The client or helper owns local replica file IO, working-copy selection, page edits,
+The helper owns local replica file IO, working-copy selection, page edits,
 and any locally stored sync-base metadata. Do not assume the server can see or scan
 the client working copy. Provide client-local page state explicitly in replica and
 sync calls.
@@ -105,31 +121,23 @@ prior MCP tool response in the current session — never from memory, local file
 A 404 from any write tool means the given ID does not exist in the live Docmost instance.
 Resolve by calling the appropriate read tool (list_spaces, list_pages) to obtain a valid ID.
 
-## Replica management
-Maintain or create a local-first replica in the working copy you are editing. If you do not pass
-local_root, the server will project paths into its default replica location at `./{space_name}-replica`.
-All local replica directory and file names must not contain spaces — replace with hyphens.
-Use get_replica_structure(space_id, local_root?) for the initial local replica layout.
-Use create_local_replica_page(..., local_root?, existing_dir_names=...) to get a canonical local-only page scaffold plan. The client writes the returned page.md and `_meta.json` locally.
-Use get_replica_standards and resolve_replica_directory_name to inspect or verify naming behavior when needed, not to guess local paths.
-Keep canonical replica descriptors in `_replica.json`, `_tree.json`, and per-page `_meta.json`.
-The client owns local replica file IO, working-copy selection, and local sync-base storage.
-The server owns canonical path planning, comparison normalization, diffing, bridge
-version checks, and safe remote Docmost writes.
-Helper-driven low-context automation lives on the REST-only `/auto-mcp` surface, not as an MCP tool.
-Call get_sync_status(space_id, pages=[...], ...) first to classify the current state before choosing a sync action.
-Use get_sync_status to identify unsynced local or remote pages programmatically from the client-reported local page state.
-Use get_sync_diff(space_id, pages=[...], ...) to return line-based local-vs-remote differences and all clashes.
-Use get_sync_diff before any force pull or force push decision.
-Use pull_replica(..., pages=[...], local_root?) to get the canonical remote snapshots the client should materialize or refresh locally.
-Use push_replica(..., pages=[...], local_root?) to push selected local replica changes back to remote Docmost.
-pull_replica never writes the client filesystem.
-push_replica never reads the client filesystem.
-When a sync result returns recommended_next_action, follow that next step instead of retrying the same blocked operation.
-If both local and remote changed since the last sync base, return the clashes and let the
-consuming model decide whether to force pull, force push, or ask the user.
-If content looks stale, deprecated, or inconsistent with verified behavior, say so explicitly.
-If requested data is missing, report that explicitly instead of guessing.
+## Replica management (override / inspection only)
+
+Prefer the docmost-helper MCP for all sync and write workflows involving a local replica.
+The tools below remain available for manual inspection and fine-grained override.
+
+Use get_replica_structure and get_replica_standards to inspect the canonical replica layout.
+Use get_sync_status(space_id, pages=[...]) to classify local vs remote state without writing.
+Use get_sync_diff(space_id, pages=[...]) to see line-level diffs before a force decision.
+Use push_replica and pull_replica only for manual override when the helper is unavailable.
+
+All local replica file IO, _meta.json updates, and stash management belong to the helper.
+The server owns path planning, normalization, bridge version checks, and remote writes.
+Helper-driven automation lives on the REST-only /auto-mcp surface, not as an MCP tool.
+
+When a sync result returns recommended_next_action, follow that step.
+Do not force a sync winner without reviewing the diff first.
+If content looks stale or inconsistent, say so explicitly rather than guessing.
 """.strip()
 
 def _transport_security() -> TransportSecuritySettings:
