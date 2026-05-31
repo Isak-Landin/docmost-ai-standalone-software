@@ -1,6 +1,7 @@
 setup-repo-git-key.sh
 venv/
 .mcp.json
+.mcp.json
 # Project specific ignores
 test_file.py
 test_query.py
