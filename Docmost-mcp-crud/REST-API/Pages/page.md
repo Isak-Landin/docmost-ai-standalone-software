@@ -2,6 +2,9 @@
 
 All page routes are scoped to a space. You must provide the `space_id` UUID.
 
+Write routes (`POST` / `PUT` / `DELETE`) go through the bridge write pipeline, which records the
+write in the bridge database around the remote Docmost REST call.
+
 ## `GET /spaces/{space_id}/pages`
 
 Returns all non-deleted pages belonging to the given space, ordered by creation date.

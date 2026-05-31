@@ -2,6 +2,8 @@
 
 The MCP server is implemented with `FastMCP` (from the `mcp` library) in `app/mcp_server.py`. It is mounted at `/` under the FastAPI app and exposes the MCP endpoint at `/mcp`.
 
+The published server instructions direct clients to prefer the companion `docmost-helper` for normal read, write, and sync workflows, and to use the tools below directly for inspection or manual override. The tools remain available either way.
+
 ## Lifecycle
 
 The MCP session manager runs inside the FastAPI lifespan context in `app/main.py`:
@@ -50,7 +52,7 @@ Controlled by the `MCP_ALLOWED_HOSTS` environment variable.
 | `update_page` | `page_id`, `title?`, `content?`, `operation?` | Update title and/or content; operation: replace, append, prepend |
 | `delete_page` | `page_id` | Soft-delete a page (moves to Docmost trash) |
 
-Write tools authenticate automatically via `DOCMOST_USER_EMAIL` and `DOCMOST_USER_PASSWORD`. Write responses return page metadata only - content is not echoed back.
+Write tools authenticate automatically via `DOCMOST_USER_EMAIL` and `DOCMOST_USER_PASSWORD`. `create_page` and `update_page` return the page including its markdown content; `delete_page` and `delete_space` return a deletion result. Page writes are recorded in the bridge database around the remote Docmost write.
 
 ## Error handling
 

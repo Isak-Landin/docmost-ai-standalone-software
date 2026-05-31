@@ -1,6 +1,6 @@
 # Data Models
 
-All output models are defined in `app/models.py` using Pydantic v2. All models use `model_config = {"from_attributes": True}` to support ORM-style construction from database row dicts.
+The public input and output models are defined in `app/models.py` using Pydantic v2. Output models that map from database rows use `model_config = {"from_attributes": True}` for ORM-style construction. Additional request/response schemas for write, automation, and helper routes live under `app/schemas/`, `app/bridge/schemas/`, and `app/helper_api/schemas.py`.
 
 ## SpaceOut
 

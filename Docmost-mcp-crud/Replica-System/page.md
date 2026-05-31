@@ -1,8 +1,9 @@
 # Replica System
 
 The replica system defines the deterministic local replica file layout for any Docmost space.
-`app/query/replica.py` owns the naming and layout contract, while `app/sync/` owns stateless
-compare/apply logic against live Docmost pages.
+`app/query/replica.py` owns the naming and layout contract. `app/sync/service.py` compares
+client-reported local page state against live Docmost pages, plans paths and diffs statelessly, and
+applies remote writes through the bridge write pipeline.
 
 ## Purpose
 

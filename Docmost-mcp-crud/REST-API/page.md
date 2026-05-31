@@ -33,12 +33,33 @@ The REST API is served by FastAPI at the root of the service.
 | `POST` | `/spaces/{space_id}/sync/push` | `app/sync/routers.py` | Push selected client-local page changes back to remote Docmost |
 | `POST` | `/spaces/{space_id}/sync/local-pages` | `app/sync/routers.py` | Return the canonical local-only page scaffold plan for the client to write locally |
 
+### Automation routes (`/auto-mcp`)
+
+Lower-context routes used by automation, backed by the bridge write pipeline.
+
+| Method | Path | Router module | Description |
+|---|---|---|---|
+| `POST` | `/auto-mcp/spaces/{space_id}/pages/apply` | `app/auto_mcp/routers.py` | Apply a batch of page create/update operations; returns applied and drifted pages |
+| `POST` | `/auto-mcp/spaces/{space_id}/observe` | `app/auto_mcp/routers.py` | Run one observer pass for the space and record results |
+
+### Helper routes (`/helper/v1`)
+
+A helper-facing surface for reads, writes, and local page snapshots, also backed by the bridge.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/helper/v1/spaces`, `/spaces/{id}`, `/spaces/{id}/tree`, `/spaces/{id}/pages`, `/spaces/{id}/pages/{page_id}` | Reads (page reads include the current bridge revision hash) |
+| `POST` / `DELETE` | `/helper/v1/spaces`, `/helper/v1/spaces/{id}` | Create / delete a space |
+| `POST` / `PUT` / `DELETE` | `/helper/v1/spaces/{id}/pages`, `/helper/v1/spaces/{id}/pages/{page_id}` | Create / update / delete a page |
+| `POST` / `GET` / `DELETE` | `/helper/v1/spaces/{id}/pages/{page_id}/snapshots[/{snapshot_id}]` | Create / read / delete a local page snapshot |
+
 ## Shared HTTP error codes
 
 | Code | Meaning |
 |---|---|
 | `400` | Validation error or Docmost rejected the request |
 | `401` | Docmost credentials invalid |
+| `409` | Bridge conflict - an aligned write did not match the current bridge head |
 | `502` | Upstream Docmost REST or sync orchestration failed |
 | `404` | Space or page not found (deleted or never existed) |
 | `503` | Docmost database connection failed |

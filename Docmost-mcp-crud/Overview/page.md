@@ -1,24 +1,35 @@
 # Overview
 
-**Docmost MCP** is a service that connects to a live Docmost instance and exposes read and write access to spaces and pages through two surfaces:
+**Docmost MCP** is a bridge service that gives MCP-compatible AI clients read and write access to documentation in a running Docmost instance, without modifying Docmost itself.
 
-- A **REST API** for conventional HTTP access
-- A **remote MCP endpoint** for GitHub Copilot CLI and other MCP-compatible clients
+It exposes two surfaces:
+
+- A **remote MCP endpoint** for MCP-compatible clients
+- A **REST API** for conventional HTTP access, including a local-first replica sync workflow
 
 ## Purpose
 
-The service bridges a running Docmost instance and AI tooling. It is primarily designed for use with GitHub Copilot CLI, and is compatible with any MCP client that supports the Streamable HTTP transport. It lets an AI assistant read, create, and update documentation in Docmost without requiring any modification to Docmost itself.
+The service lets MCP-consuming models maintain Docmost documentation programmatically - reading, creating, and updating pages - against a privately self-hosted Docmost instance. It is designed to run as a container on the same server and Docker network as the live Docmost stack, while being reachable from a separate machine running an MCP client.
 
-It is designed to run as a container on the same server and Docker network as the live Docmost stack, while being reachable from a separate machine running Copilot CLI.
+## Relationship to Docmost
+
+Docmost is separate upstream software that this service does not own or modify. The bridge integrates with Docmost from the outside:
+
+- It **reads** Docmost content directly from the Docmost PostgreSQL database (read-only).
+- It **writes** by calling Docmost's own REST write API.
+- It keeps its own **separate bridge PostgreSQL database** for version and sync state, distinct from Docmost's database.
+
+Because writes ride on Docmost's REST page pipeline, the bridge requires **Docmost v0.71.1 or later** (see [Deployment](../Deployment/page.md) for the exact reason).
 
 ## Key characteristics
 
-- **Read and write via MCP** — MCP tools cover list, get, create, update, and delete for both spaces and pages
-- **Read and write via REST** — the same operations are available as standard HTTP routes; write routes pass through to the Docmost REST API and require Docmost **v0.71.1 or later** (see [Deployment](../Deployment/page.md))
-- **Space-scoped** — pages are always queried within a space; there is no global page lookup
-- **Markdown in, metadata out** — page content is accepted as markdown on write; write responses return page metadata only, not the written content
-- **Explicit not-found errors** — if data does not exist the service returns a clear error; it never invents structure
-- **Replica-aware** — exposes tools and routes to generate and manage a local documentation replica so AI clients can maintain a local editable copy of remote docs
+- **Read and write** - reads cover spaces, pages, and the page tree; writes cover create, update, and delete for spaces and pages
+- **Two transports** - the same core operations are available over the MCP endpoint and over REST
+- **Local-first sync** - a replica/sync workflow (status, diff, pull, push) lets a client maintain a local editable copy of remote docs and reconcile changes safely
+- **Bridge-owned writes** - page writes are recorded in the bridge database around each remote Docmost write
+- **Space-scoped** - pages are always queried within a space; there is no global page lookup
+- **Markdown in, markdown out** - page content is accepted and returned as markdown
+- **Explicit not-found errors** - if data does not exist the service returns a clear error; it never invents structure
 
 ## Tech stack
 
@@ -26,11 +37,11 @@ It is designed to run as a container on the same server and Docker network as th
 |---|---|
 | Web framework | FastAPI |
 | MCP layer | `mcp` library (`FastMCP`) |
-| Database | PostgreSQL via `psycopg2` |
+| Databases | PostgreSQL via `psycopg2` (Docmost read DB + bridge state DB) |
 | Models | Pydantic v2 |
 | Runtime | Python 3.12 |
 | Deployment | Docker / Docker Compose |
 
 ## Entry point
 
-`app/main.py` — creates the FastAPI app, registers all routers, mounts the MCP sub-app, and manages the MCP session lifespan.
+`app/main.py` - creates the FastAPI app, registers all routers, mounts the MCP sub-app, and manages the MCP session lifespan.

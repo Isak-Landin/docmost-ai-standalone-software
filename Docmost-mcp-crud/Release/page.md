@@ -1,38 +1,44 @@
 # Release
 
-## v1.0.0
+## v1.0.0 (baseline)
 
-First stable release of Docmost MCP API.
+First stable release of the Docmost MCP service.
 
 ### Distribution
 
-The service is published as a Docker image on GitHub Container Registry:
+The service is run from source via Docker Compose on the server hosting Docmost (build-and-run; no
+separate registry pull required). See [Deployment](../Deployment/page.md) for the current setup.
 
-```
-ghcr.io/isak-landin/docmost-mcp-api:1.0.0
-ghcr.io/isak-landin/docmost-mcp-api:latest
-```
-
-Pull and run using a `docker-compose.yml` pointing at the image - no clone or build step required.
-
-Source is available at: https://github.com/Isak-Landin/docmost-mcp-api
-
-### What is included
+### What was included in v1.0.0
 
 - REST API for Docmost: spaces, pages, children, create, update, delete
-- MCP server exposing all REST operations as callable tools
-- Markdown in, metadata out - write responses return page identity and metadata; content is not echoed back
-- Auth handled transparently on every request
+- MCP server exposing the core operations as callable tools
+- Markdown in / markdown out
+- Auth handled transparently on every write request
 - Fully environment-driven - no hardcoded values
 - Docker Compose setup with shared external network support
-- GitHub Actions workflow publishing image to GHCR on release
-- Hardened MCP server instructions: all write tool IDs must originate from live tool responses, never inferred or invented
+- Hardened MCP server instructions: all write tool IDs must originate from live tool responses,
+  never inferred or invented
 
 ### Known characteristics
 
-Context window usage is high per session when used through an AI coding assistant. A full workflow (refactoring, re-analysing, local replica management, remote sync) typically consumes 80 KB to 200 KB of context for a tested case with 25 documentation files. Translated to approximately 3.2k - 8k tokens per documentation page.
+Context-window usage is high per session when used through an AI coding assistant. A full workflow
+(refactoring, re-analysing, local replica management, remote sync) typically consumes tens to a few
+hundred KB of context for a tested case of roughly 25 documentation files.
 
-### Limitations
+### Limitations (v1.0.0)
 
-- `update_page` write confirmation does not include content - the response returns metadata only. Use `get_page` if content verification is needed after an update.
-- Space slugs must be alphanumeric, no dashes or spaces (Docmost constraint)
+- REST write routes return page identity and metadata only - content is not echoed back. Use a
+  page read if content verification is needed after a write.
+- Space slugs must be alphanumeric, no dashes or spaces (a Docmost constraint).
+
+## Since v1.0.0
+
+Later work added, and the service now includes:
+
+- A **local-first replica and sync workflow** (status, diff, pull, push) for maintaining a local
+  editable copy of remote docs and reconciling changes safely.
+- A **separate bridge state database** that records version and sync state around each remote write.
+
+See [Replica System](../Replica-System/page.md), [REST API](../REST-API/page.md), and
+[Architecture](../Architecture/page.md) for details.

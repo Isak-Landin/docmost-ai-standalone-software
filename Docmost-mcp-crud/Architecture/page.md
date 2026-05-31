@@ -3,40 +3,44 @@
 ## Layer overview
 
 ```
-Copilot CLI / MCP client
+MCP client / REST client
         │
-        │  HTTPS  (remote machine)
+        │  HTTPS / MCP over streamable HTTP  (remote machine)
         ▼
-┌─────────────────────────────────────────────────────┐
-│  docmost-mcp container  (same server as Docmost)    │
-│                                                     │
-│  FastAPI app  (app/main.py)                         │
-│    ├── /health          → routers/health.py         │
-│    ├── /spaces/*        → routers/spaces.py         │
-│    ├── /spaces/*/pages* → routers/pages.py          │
-│    ├── /replica/*       → routers/replica.py        │
-│    └── /mcp             → FastMCP sub-app           │
-│                                                     │
-│  MCP layer  (app/mcp_server.py)                     │
-│    ├── read tools (list, get, tree, replica)        │
-│    └── write tools (create, update, delete)         │
-│                                                     │
-│  Query logic  (app/query/docmost.py)                │
-│    └── space + page queries, tree builder           │
-│                                                     │
-│  Write logic  (app/write/docmost.py)                │
-│    └── create, update, delete via Docmost REST API  │
-│                                                     │
-│  Replica logic  (app/query/replica.py)              │
-│    └── standards, name resolver, structure builder  │
-│                                                     │
-│  DB layer  (app/query/db.py)                        │
-│    └── psycopg2 + RealDictCursor, context manager   │
-└──────────────┬──────────────────────────────────────┘
-               │  TCP / PostgreSQL  (Docker network)
-               ▼
-        Docmost PostgreSQL container
+┌──────────────────────────────────────────────────────────────┐
+│  docmost-mcp container  (same server as Docmost)             │
+│                                                              │
+│  FastAPI app  (app/main.py)                                  │
+│    ├── /health              → app/query/routers/health.py    │
+│    ├── /spaces/* (read)     → app/query/routers/*            │
+│    ├── /replica/*           → app/query/routers/replica.py   │
+│    ├── /spaces/*/sync/*     → app/sync/routers.py            │
+│    ├── /spaces/* (write)    → app/write/routers/*            │
+│    ├── /auto-mcp/*          → app/auto_mcp/routers.py        │
+│    ├── /helper/v1/*         → app/helper_api/routers.py      │
+│    └── /mcp                 → FastMCP sub-app (mcp_server.py) │
+│                                                              │
+│  Read path     (app/query/)                                  │
+│    └── space/page/tree queries, prosemirror→markdown         │
+│  Write path    (app/bridge/services/write_pipeline.py)       │
+│    └── records bridge state, then calls Docmost REST         │
+│  Sync engine   (app/sync/service.py)                         │
+│    └── local-vs-remote classification, diff, pull, push      │
+│  Bridge state  (app/bridge/, bridge PostgreSQL)              │
+│    └── page heads, version history, write intents/receipts,  │
+│        observer checkpoints, local page snapshots            │
+└───────┬───────────────────────────────────┬──────────────────┘
+        │  TCP / PostgreSQL (read)           │  HTTPS REST (write + single-page read)
+        ▼                                    ▼
+  Docmost PostgreSQL container         Docmost REST API
 ```
+
+## How it integrates with Docmost
+
+Docmost is separate upstream software. This service does not modify it. It reads Docmost's
+PostgreSQL database directly for list and tree queries, and uses Docmost's own REST API for
+single-page content reads and for all writes. The bridge keeps its own separate PostgreSQL
+database for version and sync state.
 
 ## Module responsibilities
 
@@ -44,41 +48,46 @@ Copilot CLI / MCP client
 |---|---|
 | `app/main.py` | FastAPI app factory, router registration, MCP session lifespan |
 | `app/mcp_server.py` | FastMCP instance, MCP tool definitions, transport security config |
-| `app/models.py` | All Pydantic input and output models |
+| `app/models.py` | Public Pydantic input/output models (spaces, pages, replica, sync) |
+| `app/schemas/` | REST write and auto-mcp request/response schemas |
+| `app/query/db.py` | Docmost read-database DSN construction and `get_conn()` context manager |
 | `app/query/docmost.py` | SQL queries for spaces and pages, tree builder, error types |
-| `app/query/replica.py` | Replica standards, directory name resolver, replica structure builder |
-| `app/query/db.py` | Database DSN construction, `get_conn()` context manager |
-| `app/query/text_utils.py` | `reformat_text()` - collapses Docmost storage noise in raw content |
+| `app/query/replica.py` | Replica naming standard, directory-name resolver, replica structure builder |
 | `app/query/prosemirror.py` | ProseMirror JSON to markdown conversion |
-| `app/write/docmost.py` | Docmost REST API client for create, update, delete operations |
-| `app/query/routers/health.py` | `GET /health` |
-| `app/query/routers/spaces.py` | `GET /spaces`, `/spaces/{id}`, `/spaces/{id}/tree` |
-| `app/query/routers/pages.py` | `GET /spaces/{id}/pages`, `/spaces/{id}/pages/{page_id}` |
-| `app/query/routers/replica.py` | `GET /replica/standards`, `/replica/resolve-directory-name`, `/spaces/{id}/replica-structure` |
-| `app/write/routers/spaces.py` | `POST /spaces`, `DELETE /spaces/{id}` |
-| `app/write/routers/pages.py` | `POST /spaces/{id}/pages`, `PUT /spaces/{id}/pages/{id}`, `DELETE /spaces/{id}/pages/{id}` |
+| `app/query/routers/*` | Read routes: health, spaces, pages, replica |
+| `app/docmost_auth/auth.py` | Docmost REST login and in-memory token handling |
+| `app/write/docmost.py` | Docmost REST client for create, update, delete operations |
+| `app/write/mappers.py` | Maps Docmost REST / bridge results to output models |
+| `app/write/routers/*` | Write routes: spaces, pages |
+| `app/bridge/db/` | Bridge-database connection and schema bootstrap |
+| `app/bridge/repositories/*` | Bridge state access: heads, versions, write intents/receipts, checkpoints, snapshots |
+| `app/bridge/services/write_pipeline.py` | Records bridge state around each remote Docmost write |
+| `app/bridge/services/*` | Normalization, revision hashing, diffing, bootstrap, observer, reconciliation |
+| `app/sync/service.py` | Local-vs-remote sync classification, diff, pull, and push planning |
+| `app/sync/routers.py` | Sync routes: status, diff, local-pages, pull, push |
+| `app/auto_mcp/routers.py` | Automation routes: batch page apply, observe pass |
+| `app/helper_api/routers.py` | Helper-facing REST routes (`/helper/v1`) for reads, writes, and snapshots |
+| `app/observer/worker.py` | CLI entrypoint to run one observer pass for a space |
 
-## Request flow (REST)
+## Request flow (REST read)
 
-1. FastAPI router handler receives request
-2. Read handlers call the corresponding function in `app/query/docmost.py` (or `app/query/replica.py` for replica routes)
-3. `docmost.py` opens a DB connection via `app/query/db.get_conn()`, executes SQL, closes connection
-4. Row data is mapped to Pydantic models
-5. Text content passes through `app/query/text_utils.reformat_text()` before model construction
-6. Write handlers call `app/write/docmost.py` which authenticates and forwards to the Docmost REST API
-7. Pydantic model is returned as JSON
+1. FastAPI router handler receives the request
+2. Read handlers call `app/query/docmost.py` (or `app/query/replica.py` for replica routes)
+3. `docmost.py` opens a Docmost-DB connection via `app/query/db.get_conn()`, runs SQL, closes it
+4. Single-page content is fetched via Docmost REST and converted from ProseMirror JSON to markdown
+5. Row/response data is mapped to Pydantic models and returned as JSON
 
-## Request flow (MCP)
+## Request flow (write)
 
-1. MCP client calls a tool on the `/mcp` endpoint
-2. FastMCP dispatches to the matching tool function in `app/mcp_server.py`
-3. Read tools delegate to `app/query/docmost.py` / `app/query/replica.py`
-4. Write tools delegate to `app/write/docmost.py` via the Docmost REST API
-5. Database errors become `ToolError`, not-found errors become `ToolError`
-6. Result is returned as a JSON MCP response
+1. A write handler (REST, MCP tool, sync push, or helper route) calls the bridge write pipeline
+2. The pipeline records the intended write in the bridge database
+3. It calls `app/write/docmost.py`, which authenticates and forwards to the Docmost REST API
+4. On success it records the resulting version and head in the bridge database; on failure it compensates
+5. The result is mapped to an output model and returned
 
 ## Networking
 
-The container must be on the same Docker network as Docmost (`docmost_default`). The PostgreSQL container is reachable inside that network at the hostname set by `DOCMOST_DB_HOST`.
-
-The MCP endpoint is exposed externally (via `EXTERNAL_PORT`, default 8099). Copilot CLI on a remote machine connects to `https://<host>:<port>/mcp`.
+The container must share a Docker network with Docmost (`docmost_default` by default). The Docmost
+PostgreSQL container is reachable inside that network at the hostname set by `DOCMOST_DB_HOST`, and
+the Docmost web app at `DOCMOST_APP_URL`. The bridge database runs as its own service on the same
+network. The MCP/REST endpoint is exposed externally via `EXTERNAL_PORT` (default 8099).
