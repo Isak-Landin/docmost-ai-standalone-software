@@ -143,6 +143,18 @@ def sync_space(space_id: str, local_root: Optional[str] = None) -> dict:
 
 
 @mcp.tool()
+def sync_page(space_id: str, page_id: str, local_root: Optional[str] = None) -> dict:
+    """Sync one page by id: push it if locally changed, then refresh it from remote."""
+    return sync.sync_page(UUID(space_id), UUID(page_id), local_root=local_root)
+
+
+@mcp.tool()
+def sync_page_tree(space_id: str, parent_page_id: str, local_root: Optional[str] = None) -> dict:
+    """Sync a page subtree by parent id: the parent page and all descendants (push changed, pull remote)."""
+    return sync.sync_page_tree(UUID(space_id), UUID(parent_page_id), local_root=local_root)
+
+
+@mcp.tool()
 def push_pages(
     space_id: str,
     local_paths: list[str],

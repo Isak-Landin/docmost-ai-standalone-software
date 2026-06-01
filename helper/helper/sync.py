@@ -9,6 +9,7 @@ from helper.client import (
     delete_snapshot,
     get_page,
     get_space,
+    get_space_tree,
     list_pages,
 )
 from helper.replica import (
@@ -239,3 +240,63 @@ def _space_slug(space_id: UUID) -> str:
         return space.get("slug", str(space_id))
     except Exception:
         return str(space_id)
+
+
+def sync_page(
+    space_id: UUID,
+    page_id: UUID,
+    local_root: str | None = None,
+) -> dict[str, Any]:
+    root = local_root or f"./{_space_slug(space_id)}-replica"
+    local_paths = find_local_pages(root)
+    lp = _find_existing_local_path(str(page_id), local_paths)
+    pushed = (
+        push_pages(space_id, [lp], local_root=root)
+        if lp
+        else {"applied_count": 0, "drifted_count": 0, "results": []}
+    )
+    pulled = pull_pages(space_id, page_ids=[str(page_id)], local_root=root)
+    return {"page_id": str(page_id), "pushed": pushed, "pulled": pulled}
+
+
+def sync_page_tree(
+    space_id: UUID,
+    parent_page_id: UUID,
+    local_root: str | None = None,
+) -> dict[str, Any]:
+    root = local_root or f"./{_space_slug(space_id)}-replica"
+    tree = get_space_tree(space_id)
+    node = _find_node(tree.get("roots", []), str(parent_page_id))
+    ids = _subtree_ids(node) if node else []
+    local_paths = find_local_pages(root)
+    id_to_path = {str(read_meta(p).get("id", "")): p for p in local_paths}
+    push_paths = [id_to_path[i] for i in ids if i in id_to_path]
+    pushed = (
+        push_pages(space_id, push_paths, local_root=root)
+        if push_paths
+        else {"applied_count": 0, "drifted_count": 0, "results": []}
+    )
+    pulled = pull_pages(space_id, page_ids=ids, local_root=root) if ids else {"pulled_count": 0, "pages": []}
+    return {
+        "parent_page_id": str(parent_page_id),
+        "synced_page_ids": ids,
+        "pushed": pushed,
+        "pulled": pulled,
+    }
+
+
+def _find_node(roots: list[dict], target_id: str) -> dict | None:
+    for n in roots:
+        if str(n.get("page_id", "")) == target_id:
+            return n
+        found = _find_node(n.get("children", []), target_id)
+        if found:
+            return found
+    return None
+
+
+def _subtree_ids(node: dict) -> list[str]:
+    ids = [str(node.get("page_id", ""))]
+    for c in node.get("children", []):
+        ids.extend(_subtree_ids(c))
+    return ids
