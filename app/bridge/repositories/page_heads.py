@@ -46,6 +46,8 @@ def upsert_page_head(cur, snapshot: BridgePageSnapshot, *, version_id: UUID | No
             slug_id,
             parent_page_id,
             remote_updated_at,
+            position,
+            icon,
             is_deleted,
             last_source,
             last_checked_at,
@@ -53,7 +55,7 @@ def upsert_page_head(cur, snapshot: BridgePageSnapshot, *, version_id: UUID | No
             updated_at
         )
         VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW(), NOW()
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW(), NOW()
         )
         ON CONFLICT (page_id)
         DO UPDATE SET
@@ -65,6 +67,8 @@ def upsert_page_head(cur, snapshot: BridgePageSnapshot, *, version_id: UUID | No
             slug_id = COALESCE(EXCLUDED.slug_id, page_heads.slug_id),
             parent_page_id = COALESCE(EXCLUDED.parent_page_id, page_heads.parent_page_id),
             remote_updated_at = COALESCE(EXCLUDED.remote_updated_at, page_heads.remote_updated_at),
+            position = COALESCE(EXCLUDED.position, page_heads.position),
+            icon = COALESCE(EXCLUDED.icon, page_heads.icon),
             is_deleted = EXCLUDED.is_deleted,
             last_source = EXCLUDED.last_source,
             last_checked_at = NOW(),
@@ -81,6 +85,8 @@ def upsert_page_head(cur, snapshot: BridgePageSnapshot, *, version_id: UUID | No
             snapshot.slug_id,
             str(snapshot.parent_page_id) if snapshot.parent_page_id else None,
             snapshot.remote_updated_at,
+            snapshot.position,
+            snapshot.icon,
             snapshot.is_deleted,
             source,
         ),
@@ -101,6 +107,8 @@ def mark_page_deleted(cur, page_id: UUID, space_id: UUID, *, source: str) -> Pag
             slug_id,
             parent_page_id,
             remote_updated_at,
+            position,
+            icon,
             is_deleted,
             last_source,
             last_checked_at,
@@ -108,7 +116,7 @@ def mark_page_deleted(cur, page_id: UUID, space_id: UUID, *, source: str) -> Pag
             updated_at
         )
         VALUES (
-            %s, %s, NULL, NULL, NULL, '', NULL, NULL, NULL, TRUE, %s, NOW(), NOW(), NOW()
+            %s, %s, NULL, NULL, NULL, '', NULL, NULL, NULL, NULL, NULL, TRUE, %s, NOW(), NOW(), NOW()
         )
         ON CONFLICT (page_id)
         DO UPDATE SET
@@ -137,6 +145,8 @@ def _map_page_head(row: dict) -> PageHeadRecord:
         slug_id=row.get("slug_id"),
         parent_page_id=UUID(str(row["parent_page_id"])) if row.get("parent_page_id") else None,
         remote_updated_at=row.get("remote_updated_at"),
+        position=row.get("position"),
+        icon=row.get("icon"),
         is_deleted=bool(row.get("is_deleted")),
         last_source=row["last_source"],
         last_checked_at=row["last_checked_at"],

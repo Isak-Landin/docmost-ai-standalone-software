@@ -20,6 +20,8 @@ class PageVersionRecord:
     remote_updated_at: datetime | None
     observed_at: datetime
     created_at: datetime
+    position: str | None = None
+    icon: str | None = None
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,8 @@ class PageHeadRecord:
     last_checked_at: datetime
     created_at: datetime
     updated_at: datetime
+    position: str | None = None
+    icon: str | None = None
 
 
 @dataclass(frozen=True)

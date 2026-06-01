@@ -21,11 +21,13 @@ def upsert_page_version(cur, snapshot: BridgePageSnapshot, *, source: str, write
             source,
             source_write_intent_id,
             remote_updated_at,
+            position,
+            icon,
             observed_at,
             created_at
         )
         VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()
         )
         ON CONFLICT (page_id, revision_hash)
         DO UPDATE SET
@@ -36,6 +38,8 @@ def upsert_page_version(cur, snapshot: BridgePageSnapshot, *, source: str, write
             source = EXCLUDED.source,
             source_write_intent_id = COALESCE(EXCLUDED.source_write_intent_id, page_versions.source_write_intent_id),
             remote_updated_at = COALESCE(EXCLUDED.remote_updated_at, page_versions.remote_updated_at),
+            position = COALESCE(EXCLUDED.position, page_versions.position),
+            icon = COALESCE(EXCLUDED.icon, page_versions.icon),
             observed_at = NOW()
         RETURNING *
         """,
@@ -51,6 +55,8 @@ def upsert_page_version(cur, snapshot: BridgePageSnapshot, *, source: str, write
             source,
             str(write_intent_id) if write_intent_id else None,
             snapshot.remote_updated_at,
+            snapshot.position,
+            snapshot.icon,
         ),
     )
     return _map_page_version(cur.fetchone())
@@ -69,6 +75,8 @@ def _map_page_version(row: dict) -> PageVersionRecord:
         source=row["source"],
         source_write_intent_id=UUID(str(row["source_write_intent_id"])) if row.get("source_write_intent_id") else None,
         remote_updated_at=row.get("remote_updated_at"),
+        position=row.get("position"),
+        icon=row.get("icon"),
         observed_at=row["observed_at"],
         created_at=row["created_at"],
     )

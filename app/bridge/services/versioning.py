@@ -49,6 +49,8 @@ def snapshot_from_page(
     content: str | None,
     remote_updated_at,
     is_deleted: bool = False,
+    position: str | None = None,
+    icon: str | None = None,
 ) -> BridgePageSnapshot:
     normalized_title = canonicalize_title(title) or None
     normalized_content = canonicalize_content(content)
@@ -62,4 +64,6 @@ def snapshot_from_page(
         revision_hash=revision_hash(normalized_title, normalized_content),
         remote_updated_at=remote_updated_at,
         is_deleted=is_deleted,
+        position=position,
+        icon=icon,
     )

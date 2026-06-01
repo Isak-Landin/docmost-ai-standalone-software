@@ -17,6 +17,8 @@ class BridgePageSnapshot:
     revision_hash: str
     remote_updated_at: datetime | None
     is_deleted: bool = False
+    position: str | None = None
+    icon: str | None = None
 
 
 @dataclass(frozen=True)

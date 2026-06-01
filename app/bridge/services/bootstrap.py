@@ -48,6 +48,8 @@ def ensure_space_bootstrapped(space_id: UUID) -> None:
                     parent_page_id=full_page.parent_page_id,
                     content=full_page.content,
                     remote_updated_at=full_page.updated_at,
+                    position=full_page.position,
+                    icon=full_page.icon,
                 )
             )
 
