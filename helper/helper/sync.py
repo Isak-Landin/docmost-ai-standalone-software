@@ -3,9 +3,12 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
+import os
+
 from helper.client import (
     batch_apply,
     create_snapshot,
+    delete_page as client_delete_page,
     delete_snapshot,
     get_page,
     get_space,
@@ -189,7 +192,10 @@ def create_stash(space_id: UUID, page_id: UUID, local_path: str) -> dict[str, An
 
 
 def consume_stash(space_id: UUID, page_id: UUID, snapshot_id: str, local_path: str | None = None) -> None:
-    delete_snapshot(space_id, page_id, snapshot_id)
+    try:
+        delete_snapshot(space_id, page_id, snapshot_id)
+    except Exception:
+        pass  # snapshot may already have been auto-expired by a successful push
     if local_path:
         meta = read_meta(local_path)
         active = meta.get("active_snapshot", {})
@@ -300,3 +306,55 @@ def _subtree_ids(node: dict) -> list[str]:
     for c in node.get("children", []):
         ids.extend(_subtree_ids(c))
     return ids
+
+
+def resolve_conflict(
+    space_id: UUID,
+    page_id: UUID,
+    merged_content: str,
+    local_root: str | None = None,
+) -> dict[str, Any]:
+    root = local_root or f"./{_space_slug(space_id)}-replica"
+    lp = _find_existing_local_path(str(page_id), find_local_pages(root))
+    if not lp:
+        return {"page_id": str(page_id), "resolved": False, "error": "page not found in local replica"}
+    stash = create_stash(space_id, page_id, lp)
+    accept_remote(space_id, page_id, local_path=lp, local_root=root)
+    write_page(lp, merged_content)
+    pushed = push_pages(space_id, [lp], local_root=root)
+    applied = any(r.get("applied") for r in pushed.get("results", []))
+    if applied:
+        consume_stash(space_id, page_id, stash["snapshot_id"], local_path=lp)
+    return {
+        "page_id": str(page_id),
+        "resolved": applied,
+        "pushed": pushed,
+        "snapshot_id": stash.get("snapshot_id"),
+    }
+
+
+def confirm_deletion(
+    space_id: UUID,
+    page_id: UUID,
+    direction: str,
+    local_root: str | None = None,
+) -> dict[str, Any]:
+    root = local_root or f"./{_space_slug(space_id)}-replica"
+    lp = _find_existing_local_path(str(page_id), find_local_pages(root))
+    result: dict[str, Any] = {"page_id": str(page_id), "direction": direction}
+    if direction == "remote":
+        client_delete_page(space_id, page_id)
+        result["remote_deleted"] = True
+    if lp:
+        _remove_local_page(lp)
+        result["local_removed"] = True
+    return result
+
+
+def _remove_local_page(local_path: str) -> None:
+    meta = os.path.join(os.path.dirname(local_path), "_meta.json")
+    for f in (local_path, meta):
+        try:
+            os.remove(f)
+        except FileNotFoundError:
+            pass

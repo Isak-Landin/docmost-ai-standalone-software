@@ -155,6 +155,18 @@ def sync_page_tree(space_id: str, parent_page_id: str, local_root: Optional[str]
 
 
 @mcp.tool()
+def resolve_conflict(space_id: str, page_id: str, merged_content: str, local_root: Optional[str] = None) -> dict:
+    """Resolve a conflicted page: stash local, rebase on the current remote, write your merged_content, and push it."""
+    return sync.resolve_conflict(UUID(space_id), UUID(page_id), merged_content, local_root=local_root)
+
+
+@mcp.tool()
+def confirm_deletion(space_id: str, page_id: str, direction: str, local_root: Optional[str] = None) -> dict:
+    """Confirm a deletion. direction='remote' soft-deletes the remote page and removes the local copy; direction='local' removes only the local copy (accepting a remote deletion)."""
+    return sync.confirm_deletion(UUID(space_id), UUID(page_id), direction, local_root=local_root)
+
+
+@mcp.tool()
 def push_pages(
     space_id: str,
     local_paths: list[str],
