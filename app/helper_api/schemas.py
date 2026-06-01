@@ -60,6 +60,11 @@ class HelperPageUpdateIn(BaseModel):
     force: bool = False
 
 
+class HelperPageMoveIn(BaseModel):
+    position: str
+    parent_page_id: Optional[UUID] = None
+
+
 class HelperPageWriteOut(BaseModel):
     page_id: UUID
     title: Optional[str] = None

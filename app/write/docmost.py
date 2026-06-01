@@ -120,6 +120,7 @@ def update_page(
     title: Optional[str] = None,
     content: Optional[str] = None,
     operation: str = "replace",
+    icon: Optional[str] = None,
 ) -> dict[str, Any]:
     """Update an existing page's title and/or content.
 
@@ -137,11 +138,34 @@ def update_page(
     payload: dict[str, Any] = {"pageId": page_id}
     if title is not None:
         payload["title"] = title
+    if icon is not None:
+        payload["icon"] = icon
     if content is not None:
         payload["content"] = content
         payload["format"] = "markdown"
         payload["operation"] = operation
     return _post("/api/pages/update", payload)
+
+
+def move_page(
+    page_id: str,
+    position: str,
+    parent_page_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Move/re-parent a page via Docmost's true move endpoint (id-preserving).
+
+    Args:
+        page_id: UUID of the page to move.
+        position: Fractional-index position string (5-12 chars) among the target siblings.
+        parent_page_id: New parent page UUID, or None to keep the current parent (reorder only).
+
+    Returns:
+        The moved page object as returned by Docmost.
+    """
+    payload: dict[str, Any] = {"pageId": page_id, "position": position}
+    if parent_page_id is not None:
+        payload["parentPageId"] = parent_page_id
+    return _post("/api/pages/move", payload)
 
 
 def delete_page(page_id: str) -> dict[str, Any]:

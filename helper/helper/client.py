@@ -129,6 +129,13 @@ def delete_page(space_id: UUID, page_id: UUID) -> None:
     _delete(f"/helper/v1/spaces/{space_id}/pages/{page_id}")
 
 
+def move_page(space_id: UUID, page_id: UUID, position: str, parent_page_id: UUID | None = None) -> dict:
+    body: dict[str, Any] = {"position": position}
+    if parent_page_id is not None:
+        body["parent_page_id"] = str(parent_page_id)
+    return _post(f"/helper/v1/spaces/{space_id}/pages/{page_id}/move", body)
+
+
 # ---------------------------------------------------------------------------
 # Batch sync and observer
 # ---------------------------------------------------------------------------

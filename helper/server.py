@@ -126,6 +126,12 @@ def delete_page(space_id: str, page_id: str) -> None:
     client.delete_page(UUID(space_id), UUID(page_id))
 
 
+@mcp.tool()
+def move_page(space_id: str, page_id: str, position: str, parent_page_id: Optional[str] = None) -> dict:
+    """Move/re-parent a page (id-preserving). position is a fractional-index string among the target siblings; pass parent_page_id to re-parent or omit to reorder."""
+    return client.move_page(UUID(space_id), UUID(page_id), position, UUID(parent_page_id) if parent_page_id else None)
+
+
 # ---------------------------------------------------------------------------
 # Sync tools
 # ---------------------------------------------------------------------------

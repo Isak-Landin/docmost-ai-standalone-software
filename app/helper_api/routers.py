@@ -18,10 +18,12 @@ from app.bridge.services.write_pipeline import (
     create_page_via_bridge,
     delete_page_via_bridge,
     delete_space_via_bridge,
+    move_page_via_bridge,
     update_page_via_bridge,
 )
 from app.helper_api.schemas import (
     HelperPageCreateIn,
+    HelperPageMoveIn,
     HelperPageOut,
     HelperPageTreeNodeOut,
     HelperPageUpdateIn,
@@ -230,6 +232,29 @@ def delete_page(space_id: UUID, page_id: UUID):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
         _raise_for_docmost_error(exc)
+
+
+@router.post(
+    "/spaces/{space_id}/pages/{page_id}/move",
+    response_model=HelperPageWriteOut,
+    summary="Move/re-parent a page (id-preserving)",
+)
+def move_page(space_id: UUID, page_id: UUID, body: HelperPageMoveIn):
+    try:
+        result = move_page_via_bridge(
+            page_id=page_id,
+            position=body.position,
+            parent_page_id=body.parent_page_id,
+            caller_mode="helper",
+            expected_space_id=space_id,
+        )
+    except BridgeConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BridgeStateError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        _raise_for_docmost_error(exc)
+    return _map_write_result(result)
 
 
 # ---------------------------------------------------------------------------

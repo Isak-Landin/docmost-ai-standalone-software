@@ -31,6 +31,7 @@ from app.query.prosemirror import prosemirror_to_markdown
 from app.write.docmost import create_page as create_remote_page
 from app.write.docmost import delete_page as delete_remote_page
 from app.write.docmost import get_page_info
+from app.write.docmost import move_page as move_remote
 from app.write.docmost import update_page as update_remote_page
 
 
@@ -42,6 +43,8 @@ class RemotePageContext:
     slug_id: str | None
     parent_page_id: UUID | None
     content: str
+    position: str | None
+    icon: str | None
     updated_at: Any
     raw_page: dict[str, Any]
 
@@ -212,6 +215,83 @@ def update_page_via_bridge(
         raise
 
 
+def move_page_via_bridge(
+    *,
+    page_id: UUID,
+    position: str,
+    parent_page_id: UUID | None,
+    caller_mode: str,
+    expected_space_id: UUID | None = None,
+) -> BridgeWriteResult:
+    remote_before = fetch_remote_page_context(page_id)
+    if expected_space_id and remote_before.space_id != expected_space_id:
+        raise BridgeStateError("Page does not belong to the requested space.")
+    ensure_space_bootstrapped(remote_before.space_id)
+
+    target_parent = parent_page_id if parent_page_id is not None else remote_before.parent_page_id
+    target_snapshot = snapshot_from_page(
+        page_id=page_id,
+        space_id=remote_before.space_id,
+        title=remote_before.title,
+        slug_id=remote_before.slug_id,
+        parent_page_id=target_parent,
+        content=remote_before.content,
+        remote_updated_at=remote_before.updated_at,
+        position=position,
+        icon=remote_before.icon,
+    )
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            intent = create_write_intent(
+                cur,
+                page_id=page_id,
+                space_id=remote_before.space_id,
+                action="move_page",
+                caller_mode=caller_mode,
+                expected_base_revision_hash=None,
+                target_revision_hash=target_snapshot.revision_hash,
+                title=target_snapshot.title,
+                content=target_snapshot.content,
+                parent_page_id=target_parent,
+                operation=None,
+            )
+
+    try:
+        remote_response = move_remote(
+            page_id=str(page_id),
+            position=position,
+            parent_page_id=str(parent_page_id) if parent_page_id else None,
+        )
+        remote_page = remote_response.get("page", remote_response) if isinstance(remote_response, dict) else {}
+        if not isinstance(remote_page, dict):
+            remote_page = {}
+        new_parent = _coerce_uuid(remote_page.get("parentPageId") or remote_page.get("parent_page_id")) or target_parent
+        new_position = remote_page.get("position") or position
+        finalized_snapshot = snapshot_from_page(
+            page_id=page_id,
+            space_id=remote_before.space_id,
+            title=remote_before.title,
+            slug_id=remote_before.slug_id,
+            parent_page_id=new_parent,
+            content=remote_before.content,
+            remote_updated_at=remote_page.get("updatedAt") or remote_page.get("updated_at") or remote_before.updated_at,
+            position=new_position,
+            icon=remote_before.icon,
+        )
+        return _finalize_write(
+            intent_id=intent.id,
+            snapshot=finalized_snapshot,
+            action="moved_remote",
+            caller_mode=caller_mode,
+            remote_page=remote_page,
+            receipt_id=None,
+            rollback_remote=None,
+        )
+    except Exception as exc:
+        _mark_intent_failed(intent.id, error_text=str(exc), remote_page_id=page_id)
+        raise
+
+
 def delete_space_via_bridge(*, space_id: UUID, caller_mode: str) -> None:
     from app.write.docmost import delete_space as delete_remote_space
 
@@ -320,6 +400,8 @@ def fetch_remote_page_context(page_id: UUID) -> RemotePageContext:
         slug_id=page.get("slugId") or page.get("slug_id"),
         parent_page_id=_coerce_uuid(page.get("parentPageId") or page.get("parent_page_id")),
         content=content,
+        position=page.get("position"),
+        icon=page.get("icon"),
         updated_at=page.get("updatedAt") or page.get("updated_at"),
         raw_page=page,
     )
