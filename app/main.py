@@ -4,6 +4,7 @@ import os
 from fastapi import FastAPI
 
 from app.auto_mcp import routers as auto_mcp
+from app.contract import router as contract_router
 from app.helper_api import routers as helper_api
 from app.mcp_server import mcp
 from app.query.routers import health, pages, replica, spaces
@@ -32,7 +33,10 @@ app.include_router(health.router)
 app.include_router(replica.router)
 app.include_router(sync.router)
 app.include_router(auto_mcp.router)
-app.include_router(helper_api.router)
+app.include_router(contract_router)
+# Helper-facing CRUD contract: served under /v1 (canonical) and /helper/v1 (back-compat).
+app.include_router(helper_api.router, prefix="/v1")
+app.include_router(helper_api.router, prefix="/helper/v1")
 # Query (read) routes — backed by direct PostgreSQL access
 app.include_router(spaces.router)
 app.include_router(pages.router)

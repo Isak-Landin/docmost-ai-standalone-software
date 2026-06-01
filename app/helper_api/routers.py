@@ -48,7 +48,7 @@ from app.query.docmost import (
 )
 from app.write.docmost import create_space as docmost_create_space
 
-router = APIRouter(prefix="/helper/v1", tags=["helper-api"])
+router = APIRouter(tags=["helper-api"])
 
 
 # ---------------------------------------------------------------------------

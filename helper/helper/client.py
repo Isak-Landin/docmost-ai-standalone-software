@@ -56,6 +56,10 @@ def _delete(path: str) -> None:
 # Read operations
 # ---------------------------------------------------------------------------
 
+def get_contract() -> dict:
+    return _get("/v1/contract")
+
+
 def list_spaces() -> list[dict]:
     return _get("/helper/v1/spaces")
 

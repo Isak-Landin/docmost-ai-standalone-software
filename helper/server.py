@@ -16,6 +16,17 @@ from mcp.server.fastmcp import FastMCP
 
 from helper import client, sync
 
+_EXPECTED_CONTRACT = "1"
+try:
+    _contract = client.get_contract()
+    if str(_contract.get("contract_version")) != _EXPECTED_CONTRACT:
+        print(
+            f"WARNING: docmost server contract {_contract.get('contract_version')} != expected {_EXPECTED_CONTRACT}",
+            file=sys.stderr,
+        )
+except Exception as _exc:  # handshake is best-effort; the helper still starts
+    print(f"WARNING: docmost contract handshake failed: {_exc}", file=sys.stderr)
+
 mcp = FastMCP(
     "docmost-helper",
     instructions=(
