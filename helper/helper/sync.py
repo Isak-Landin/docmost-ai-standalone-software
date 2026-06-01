@@ -22,12 +22,14 @@ from helper.replica import (
     page_path_from_dir,
     read_meta,
     read_page,
+    read_tree_snapshot,
     record_active_snapshot,
     resolve_page_dir,
     update_meta_after_pull,
     update_meta_after_sync,
     write_meta,
     write_page,
+    write_tree_snapshot,
 )
 
 
@@ -122,7 +124,21 @@ def sync_space(
         meta = read_meta(lp)
         pid = meta.get("id")
         if pid:
-            local_page_ids[pid] = lp
+            local_page_ids[str(pid)] = lp
+
+    # Structural reconcile: a page present in the last-synced tree snapshot whose local
+    # file is now gone was deleted locally. Globbing alone cannot see a removed file, so
+    # the snapshot is the only source of truth. Surface as a confirmation, never auto-delete.
+    prev_tree = read_tree_snapshot(root)
+    deletion_candidates = [
+        {
+            "page_id": str(entry["page_id"]),
+            "parent_page_id": entry.get("parent_page_id"),
+            "reason": "in last-synced tree but local file removed",
+        }
+        for entry in prev_tree.get("pages", [])
+        if entry.get("page_id") and str(entry["page_id"]) not in local_page_ids
+    ]
 
     push_result: dict[str, Any] = {"applied_count": 0, "drifted_count": 0, "results": []}
     if local_page_paths:
@@ -135,10 +151,13 @@ def sync_space(
 
     # Fetch remote pages once and pull only those not already tracked locally.
     remote_pages = list_pages(space_id)
+    deletion_candidate_ids = {c["page_id"] for c in deletion_candidates}
     pulled: list[dict] = []
     for rp in remote_pages:
         pid = str(rp.get("page_id", ""))
-        if pid in local_page_ids:
+        if pid in local_page_ids or pid in deletion_candidate_ids:
+            # Locally removed but still remote: surfaced as a deletion candidate above.
+            # Don't silently re-materialize it this run — let the model confirm or ignore.
             continue
         page_detail = get_page(space_id, UUID(pid))
         page_dir = resolve_page_dir(root, rp)
@@ -149,7 +168,33 @@ def sync_space(
 
     pull_result = {"pulled_count": len(pulled), "pages": pulled}
 
-    return {"pushed": push_result, "pulled": pull_result}
+    # Persist the post-sync tree (page id + parent) so the next sync can diff against it.
+    write_tree_snapshot(root, _current_tree_entries(root))
+
+    return {
+        "pushed": push_result,
+        "pulled": pull_result,
+        "deletion_candidates": deletion_candidates,
+    }
+
+
+def _current_tree_entries(root: str) -> list[dict[str, Any]]:
+    """Snapshot every tracked local page as {page_id, parent_page_id, local_path}."""
+    entries: list[dict[str, Any]] = []
+    for lp in find_local_pages(root):
+        meta = read_meta(lp)
+        pid = meta.get("id")
+        if not pid:
+            continue
+        parent = meta.get("parent_page_id")
+        entries.append(
+            {
+                "page_id": str(pid),
+                "parent_page_id": str(parent) if parent else None,
+                "local_path": lp,
+            }
+        )
+    return entries
 
 
 def accept_remote(

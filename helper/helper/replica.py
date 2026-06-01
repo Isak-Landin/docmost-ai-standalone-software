@@ -145,3 +145,18 @@ def _atomic_write(path: str, content: str) -> None:
         except OSError:
             pass
         raise
+
+
+def _tree_path(local_root: str) -> str:
+    return os.path.join(local_root, "_tree.json")
+
+
+def write_tree_snapshot(local_root: str, entries: list[dict[str, Any]]) -> None:
+    _atomic_write(_tree_path(local_root), json.dumps({"pages": entries}, indent=2, default=str))
+
+
+def read_tree_snapshot(local_root: str) -> dict[str, Any]:
+    try:
+        return json.loads(Path(_tree_path(local_root)).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"pages": []}
