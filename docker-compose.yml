@@ -53,6 +53,40 @@ services:
     networks:
       - docmost_network
 
+  # ------------------------------------------------------------
+  # Worker
+  # Fixed-interval observer loop. Folds direct-Docmost-UI edits
+  # (changes not made through the bridge) into the bridge version state.
+  # ------------------------------------------------------------
+  docmost-mcp-worker:
+    container_name: docmost-mcp-worker
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      bridge-db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DOCMOST_DB_HOST: ${DOCMOST_DB_HOST}
+      DOCMOST_DB_PORT: ${DOCMOST_DB_PORT}
+      DOCMOST_DB_NAME: ${DOCMOST_DB_NAME}
+      DOCMOST_DB_USER: ${DOCMOST_DB_USER}
+      DOCMOST_DB_PASSWORD: ${DOCMOST_DB_PASSWORD}
+      BRIDGE_DB_HOST: ${BRIDGE_DB_HOST}
+      BRIDGE_DB_PORT: ${BRIDGE_DB_PORT}
+      BRIDGE_DB_NAME: ${BRIDGE_DB_NAME}
+      BRIDGE_DB_USER: ${BRIDGE_DB_USER}
+      BRIDGE_DB_PASSWORD: ${BRIDGE_DB_PASSWORD}
+      DOCMOST_APP_URL: ${DOCMOST_APP_URL}
+      DOCMOST_USER_EMAIL: ${DOCMOST_USER_EMAIL}
+      DOCMOST_USER_PASSWORD: ${DOCMOST_USER_PASSWORD}
+      WORKER_INTERVAL_SECONDS: ${WORKER_INTERVAL_SECONDS:-15}
+    command: ["python", "-m", "app.observer.worker", "--loop"]
+    networks:
+      - docmost_network
+
 volumes:
   bridge_db_data:
 

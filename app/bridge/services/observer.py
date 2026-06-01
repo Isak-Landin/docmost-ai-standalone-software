@@ -52,6 +52,8 @@ def observe_space(space_id: UUID) -> ObserveSpaceResult:
                     parent_page_id=full_page.parent_page_id,
                     content=full_page.content,
                     remote_updated_at=full_page.updated_at,
+                    position=full_page.position,
+                    icon=full_page.icon,
                 )
                 current_head = heads.get(remote_page.id)
 
