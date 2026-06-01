@@ -162,6 +162,21 @@ def update_page_via_bridge(
                 content=resolved_content,
                 remote_updated_at=remote_before.updated_at,
             )
+            if current_head is not None and current_head.current_revision_hash == target_snapshot.revision_hash:
+                return BridgeWriteResult(
+                    page_id=page_id,
+                    space_id=remote_before.space_id,
+                    title=target_snapshot.title,
+                    slug_id=remote_before.slug_id,
+                    parent_page_id=remote_before.parent_page_id,
+                    content=target_snapshot.content,
+                    base_revision_hash=target_snapshot.revision_hash,
+                    remote_updated_at=remote_before.updated_at,
+                    action="unchanged",
+                    caller_mode=caller_mode,
+                    write_intent_id=UUID(int=0),
+                    remote_page=remote_before.raw_page,
+                )
             intent = create_write_intent(
                 cur,
                 page_id=page_id,
