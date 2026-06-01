@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from app.bridge.db.connection import get_conn
 from app.bridge.errors import BridgeConflictError, BridgeStateError
 from app.bridge.repositories.page_heads import get_page_head
+from app.bridge.services.bootstrap import ensure_space_bootstrapped
 from app.bridge.repositories.snapshots import (
     create_snapshot as repo_create_snapshot,
     delete_snapshot as repo_delete_snapshot,
@@ -113,6 +114,7 @@ def get_page(space_id: UUID, page_id: UUID):
 
     current_revision_hash: str | None = None
     try:
+        ensure_space_bootstrapped(space_id)
         with get_conn() as conn:
             with conn.cursor() as cur:
                 head = get_page_head(cur, page_id)
