@@ -25,6 +25,8 @@ class HelperPageOut(BaseModel):
     content: Optional[str] = None
     parent_page_id: Optional[UUID] = None
     slug_id: Optional[str] = None
+    position: Optional[str] = None
+    icon: Optional[str] = None
     current_revision_hash: Optional[str] = None
 
 

@@ -338,6 +338,8 @@ def _map_page(page: PageOut, *, current_revision_hash: str | None = None) -> Hel
         content=page.content,
         parent_page_id=page.parent_page_id,
         slug_id=page.slug_id,
+        position=page.position,
+        icon=page.icon,
         current_revision_hash=current_revision_hash,
     )
 

@@ -77,6 +77,10 @@ def update_meta_after_pull(local_path: str, page: dict[str, Any]) -> None:
         meta["space_id"] = str(page["space_id"])
     if page.get("parent_page_id") is not None:
         meta["parent_page_id"] = str(page["parent_page_id"])
+    if page.get("position") is not None:
+        meta["position"] = page["position"]
+    if page.get("icon") is not None:
+        meta["icon"] = page["icon"]
     # current_revision_hash from server becomes the new sync base
     if page.get("current_revision_hash") is not None:
         meta["base_revision_hash"] = page["current_revision_hash"]
