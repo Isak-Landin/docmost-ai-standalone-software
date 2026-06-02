@@ -131,6 +131,7 @@ def update_page_via_bridge(
     expected_base_revision_hash: str | None = None,
     force: bool = False,
     expected_space_id: UUID | None = None,
+    icon: str | None = None,
 ) -> BridgeWriteResult:
     remote_before = fetch_remote_page_context(page_id)
     if expected_space_id and remote_before.space_id != expected_space_id:
@@ -153,6 +154,7 @@ def update_page_via_bridge(
                 content,
                 operation,
             )
+            resolved_icon = icon if icon is not None else remote_before.icon
             target_snapshot = snapshot_from_page(
                 page_id=page_id,
                 space_id=remote_before.space_id,
@@ -161,8 +163,15 @@ def update_page_via_bridge(
                 parent_page_id=remote_before.parent_page_id,
                 content=resolved_content,
                 remote_updated_at=remote_before.updated_at,
+                position=remote_before.position,
+                icon=resolved_icon,
             )
-            if current_head is not None and current_head.current_revision_hash == target_snapshot.revision_hash:
+            icon_changed = icon is not None and (icon or None) != (current_head.icon if current_head else None)
+            if (
+                current_head is not None
+                and current_head.current_revision_hash == target_snapshot.revision_hash
+                and not icon_changed
+            ):
                 return BridgeWriteResult(
                     page_id=page_id,
                     space_id=remote_before.space_id,
@@ -205,6 +214,7 @@ def update_page_via_bridge(
             title=resolved_title,
             content=resolved_content if content is not None else None,
             operation="replace",
+            icon=icon,
         )
         remote_page = remote_response.get("page", remote_response)
         finalized_snapshot = snapshot_from_page(
@@ -215,6 +225,8 @@ def update_page_via_bridge(
             parent_page_id=_coerce_uuid(remote_page.get("parentPageId") or remote_page.get("parent_page_id")) or remote_before.parent_page_id,
             content=target_snapshot.content,
             remote_updated_at=remote_page.get("updatedAt") or remote_page.get("updated_at"),
+            position=remote_page.get("position") or remote_before.position,
+            icon=remote_page.get("icon") if remote_page.get("icon") is not None else resolved_icon,
         )
         return _finalize_write(
             intent_id=intent.id,

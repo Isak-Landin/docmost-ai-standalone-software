@@ -7,6 +7,7 @@ from app.auto_mcp import routers as auto_mcp
 from app.contract import router as contract_router
 from app.helper_api import routers as helper_api
 from app.mcp_server import mcp
+from app.reconcile import routers as reconcile
 from app.query.routers import health, pages, replica, spaces
 from app.sync import routers as sync
 from app.write.routers import pages as write_pages
@@ -37,6 +38,9 @@ app.include_router(contract_router)
 # Helper-facing CRUD contract: served under /v1 (canonical) and /helper/v1 (back-compat).
 app.include_router(helper_api.router, prefix="/v1")
 app.include_router(helper_api.router, prefix="/helper/v1")
+# Reconcile brain + resolution endpoints: same /v1 (+ /helper/v1) surface.
+app.include_router(reconcile.router, prefix="/v1")
+app.include_router(reconcile.router, prefix="/helper/v1")
 # Query (read) routes — backed by direct PostgreSQL access
 app.include_router(spaces.router)
 app.include_router(pages.router)
