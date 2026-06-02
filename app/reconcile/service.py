@@ -169,6 +169,7 @@ def _apply_create(space_id: UUID, page: ReconcilePageIn, out: ReconcileOut) -> N
             parent_page_id=page.parent_page_id,
             caller_mode="auto_sync",
         )
+        remote = res.remote_page or {}
         out.applied.append(
             ReconcileAppliedItem(
                 page_id=res.page_id,
@@ -177,8 +178,8 @@ def _apply_create(space_id: UUID, page: ReconcilePageIn, out: ReconcileOut) -> N
                 title=res.title,
                 slug_id=res.slug_id,
                 parent_page_id=res.parent_page_id,
-                position=page.position,
-                icon=page.icon,
+                position=remote.get("position") or page.position,
+                icon=remote.get("icon") if remote.get("icon") is not None else page.icon,
                 base_revision_hash=res.base_revision_hash,
             )
         )

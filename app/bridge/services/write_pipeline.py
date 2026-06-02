@@ -106,6 +106,8 @@ def create_page_via_bridge(
             parent_page_id=_coerce_uuid(remote_page.get("parentPageId") or remote_page.get("parent_page_id")) or parent_page_id,
             content=snapshot.content,
             remote_updated_at=remote_page.get("updatedAt") or remote_page.get("updated_at"),
+            position=remote_page.get("position"),
+            icon=remote_page.get("icon"),
         )
         return _finalize_write(
             intent_id=intent.id,
