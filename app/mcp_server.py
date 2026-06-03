@@ -52,92 +52,17 @@ from app.sync.service import (
 from app.write.mappers import map_page_out_from_bridge_result, map_space
 
 SERVER_INSTRUCTIONS = """
-## IMPORTANT: Use the docmost-helper MCP for all normal operations
+Quiet operator / inspection fallback for the Docmost bridge. This /mcp surface is NOT the
+model's workflow surface — the model uses the docmost-helper stdio MCP for all reads,
+writes, and sync. The helper talks to this server over REST (/v1, /helper/v1, /auto-mcp),
+never over /mcp.
 
-If the docmost-helper stdio MCP is available in your session, use it for all Docmost
-operations — reads, writes, and sync. The helper owns local replica file IO and
-provides the correct sync contract with the server.
-
-Only call tools on this server (docmost-mcp) directly when:
-- The helper is unavailable (fallback / manual override)
-- You need direct inspection of bridge state (get_sync_status, get_sync_diff)
-- You are performing a single targeted read without a local replica
-
-The helper calls this server via REST (/helper/v1/ and /auto-mcp/) — never via this MCP
-surface. Do not instruct the helper to call /mcp.
-
----
-
-This server exposes a bridge to Docmost spaces and pages for both reading and writing.
-
-This MCP surface is the server-side half of a bridge.
-The server owns Docmost integration, bridge state, normalization, and remote writes.
-The helper owns local replica file IO, working-copy selection, page edits,
-and any locally stored sync-base metadata. Do not assume the server can see or scan
-the client working copy. Provide client-local page state explicitly in replica and
-sync calls.
-
-## Reading
-Use list_spaces to find the correct space. Use get_space_tree for page hierarchy.
-Use list_pages for a flat page list. Use get_page for a single page with markdown content.
-If the user gives a space name rather than a UUID, resolve it with list_spaces first.
-Pages are always space-scoped — always pass space_id together with page_id.
-
-## Writing
-All write tools authenticate automatically — never call an auth tool first.
-Use push_replica and pull_replica as the normal local-first workflow when the user
-is working from a client-owned replica.
-Use create_space to create a new space (slug must be alphanumeric, no dashes).
-Use create_page to create a page. Pass parent_page_id to create nested child pages.
-Use update_page to update an existing page's title and/or content.
-  Prefer update_page over delete+create — Docmost preserves page history on update.
-  Use operation='replace' (default) to overwrite, 'append' or 'prepend' to add content.
-Use delete_page to soft-delete a page (it moves to Docmost trash).
-Use delete_space to permanently delete a space and all its contents.
-Bridge-owned page writes are recorded in the bridge database before and after the remote Docmost write.
-All content is markdown in and out. Never pass ProseMirror JSON to write tools.
-
-Page title rules (applies to create_page and update_page):
-The page title is always passed as a separate 'title' parameter — it is rendered by Docmost
-as the page header above the body. Never include the title as a H1 heading (# Title) at the
-top of the content markdown. Doing so causes the title to appear twice in the rendered page.
-
-Content formatting rules (applies to all page content passed to create_page and update_page):
-Do NOT use Unicode typographic characters in page content. These characters are not reliably
-rendered across all Docmost consumers and may appear as garbled text or question marks.
-Forbidden characters and their plain-text replacements:
-  em dash (-)    -> use hyphen with surrounding spaces ( - ) or a plain hyphen (-)
-  en dash (-)    -> use a plain hyphen (-)
-  right arrow (->) -> use the two-character sequence ->
-  double arrow (=>) -> use the two-character sequence =>
-  ellipsis (...)  -> use three plain dots (...)
-  curly quotes (" " ' ') -> use straight quotes (" and ')
-When inline text separation is needed, use a plain hyphen (-) as the separator.
-
-All IDs passed to write tools (space_id, page_id, parent_page_id) must originate from a
-prior MCP tool response in the current session — never from memory, local files, or inference.
-  - space_id: must come from list_spaces or create_space.
-  - parent_page_id: must come from list_pages, get_space_tree, or a create_page response.
-A 404 from any write tool means the given ID does not exist in the live Docmost instance.
-Resolve by calling the appropriate read tool (list_spaces, list_pages) to obtain a valid ID.
-
-## Replica management (override / inspection only)
-
-Prefer the docmost-helper MCP for all sync and write workflows involving a local replica.
-The tools below remain available for manual inspection and fine-grained override.
-
-Use get_replica_structure and get_replica_standards to inspect the canonical replica layout.
-Use get_sync_status(space_id, pages=[...]) to classify local vs remote state without writing.
-Use get_sync_diff(space_id, pages=[...]) to see line-level diffs before a force decision.
-Use push_replica and pull_replica only for manual override when the helper is unavailable.
-
-All local replica file IO, _meta.json updates, and stash management belong to the helper.
-The server owns path planning, normalization, bridge version checks, and remote writes.
-Helper-driven automation lives on the REST-only /auto-mcp surface, not as an MCP tool.
-
-When a sync result returns recommended_next_action, follow that step.
-Do not force a sync winner without reviewing the diff first.
-If content looks stale or inconsistent, say so explicitly rather than guessing.
+These MCP tools exist only for manual operator inspection and emergency override when the
+helper is unavailable: reads (list_spaces, get_space, get_space_tree, list_pages, get_page)
+and bridge-state inspection (get_sync_status, get_sync_diff). The server owns Docmost
+integration, bridge version truth, normalization, and remote writes; the helper owns all
+local replica file IO. Content is markdown; the page title is a separate parameter (never an
+H1 in the body); use plain ASCII punctuation.
 """.strip()
 
 def _transport_security() -> TransportSecuritySettings:
