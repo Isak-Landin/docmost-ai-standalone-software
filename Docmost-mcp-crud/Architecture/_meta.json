@@ -3,10 +3,10 @@
   "title": "Architecture",
   "slug_id": "BfSNsBQKhK",
   "parent_page_id": null,
-  "local_dir_name": "Architecture",
-  "local_dir_path": "./Docmost-mcp-crud/Architecture",
-  "content_file_path": "./Docmost-mcp-crud/Architecture/page.md",
-  "meta_file_path": "./Docmost-mcp-crud/Architecture/_meta.json",
-  "source": "remote-synced",
-  "space_id": "019d682b-1af2-7333-aab6-2ebcbeb55cff"
+  "parent_local_dir_path": null,
+  "space_id": "019d682b-1af2-7333-aab6-2ebcbeb55cff",
+  "position": "a86rV",
+  "base_revision_hash": "d875522fb706cb37905ce1e3f635c41b950c710fd49c3edbcd6588002eac48de",
+  "content_file_path": "Docmost-mcp-crud/Architecture/page.md",
+  "meta_file_path": "Docmost-mcp-crud/Architecture/_meta.json"
 }

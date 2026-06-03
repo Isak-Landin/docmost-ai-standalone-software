@@ -1,66 +1,26 @@
-# Replica
-
-The replica routes expose naming rules and deterministic local layouts for documentation replicas. They do not require a database connection (except `replica-structure`).
+These routes expose the server-side replica planners: naming rules and deterministic local layouts. They plan canonical paths but perform no client file IO (the helper owns local IO). They are used by the operator `/mcp` surface and by the `/sync` routes.
 
 ## `GET /replica/standards`
 
-Returns the shared naming, layout, and sync rules for local documentation replicas.
-
-Use this when a client needs to create or update local replica content without guessing the standard.
-
-### Response model: `ReplicaStandardsOut`
-
-No parameters. No errors.
-
----
+Returns the shared naming, layout, and sync rules for local replicas (`ReplicaStandardsOut`). No parameters, no errors.
 
 ## `GET /replica/resolve-directory-name`
 
-Resolves the correct local directory name for a given page title under the current naming standard.
+Resolves the correct local directory name for a page title under the current naming standard.
 
-Use this when a client needs to inspect naming behavior without guessing. For actual local-only page creation, use `POST /spaces/{space_id}/sync/local-pages` so the server scaffolds the replica files.
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `title` | yes | page title to resolve |
+| `slug_id` | no | collision suffix |
+| `page_id` | no | fallback collision suffix |
+| `existing_dir_names` | no | sibling names already in use |
 
-### Query parameters
-
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `title` | string | yes | Page title to resolve |
-| `slug_id` | string | no | Remote or planned slug identifier — used as collision suffix |
-| `page_id` | UUID | no | Remote page UUID — used as fallback collision suffix |
-| `existing_dir_names` | list[string] | no | Sibling directory names already in use at this level |
-
-### Response model: `ReplicaNameResolutionOut`
-
-### Collision resolution order
-
-1. If the sanitized title is unique among siblings → use title as-is
-2. If collision and `slug_id` is available → `{title}__{slug_id}`
-3. If still colliding → `{title}__{short_page_id}` (first 8 chars of UUID)
-4. If still colliding → `{title}__{short_page_id}-{n}` with incrementing `n`
-
----
+Collision order: sanitized title, then `{title}__{slug_id}`, then `{title}__{short_page_id}`, then a numeric fallback. No spaces are allowed in any local directory or file name.
 
 ## `GET /spaces/{space_id}/replica-structure`
 
-Returns the full deterministic local replica layout for one space, including nested directory paths, content file paths, and metadata file paths for every page.
+Returns the full deterministic local layout for one space - nested directory paths, `page.md` paths, and `_meta.json` paths for every page. Errors: `404` space, `503` database.
 
-Use this instead of guessing how remote Docmost pages should be represented locally.
+## Relationship to the helper replica
 
-### Path parameters
-
-| Parameter | Type | Description |
-|---|---|---|
-| `space_id` | UUID | Space UUID |
-
-### Response model: `ReplicaStructureOut`
-
-### Errors
-
-| Code | Reason |
-|---|---|
-| `404` | Space not found or deleted |
-| `503` | Database connection failed |
-
-### Implementation
-
-`app/query/replica.get_replica_structure()` calls `get_space_tree()` then walks the tree recursively, resolving directory names level-by-level using the collision logic above.
+The helper (`helper/helper/replica.py`) owns the actual on-disk replica: `page.md`, `_meta.json`, `_replica.json`, and `_tree.json`, plus discovery by `_replica.json` space id under `DOCMOST_REPLICA_BASE`. These server planners describe canonical naming; the helper is what writes and tracks the files during the reconcile flow. See the Replica System page.

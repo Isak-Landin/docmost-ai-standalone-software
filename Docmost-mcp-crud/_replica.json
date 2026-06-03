@@ -1,7 +1,5 @@
 {
   "space_id": "019d682b-1af2-7333-aab6-2ebcbeb55cff",
-  "space_name": "Docmost-MCP-Service",
-  "space_slug": "docmostmcpservice",
-  "replica_root": "./Docmost-mcp-crud",
-  "source": "remote-synced"
+  "slug": "docmostmcpservice",
+  "name": "Docmost-MCP-Service"
 }

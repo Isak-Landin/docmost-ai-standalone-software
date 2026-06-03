@@ -1,1127 +1,440 @@
 # Docmost MCP
 
-Docmost MCP runs alongside a live Docmost deployment on the same Docker network,
-reads Docmost content directly from the Docmost PostgreSQL database, keeps
-bridge-owned version state in a separate bridge PostgreSQL database, and exposes
-that bridge through both a remote MCP endpoint for agents and a REST API for
-conventional HTTP integrations.
+Docmost MCP is a bridge between a live Docmost deployment and an MCP-consuming model
+(Claude Code). It reads Docmost content directly from Docmost's PostgreSQL database, writes
+through Docmost's REST API, and keeps its own separate "bridge" PostgreSQL database for
+version and sync state. On top of that it exposes a REST API, a set of helper-facing routes,
+and an operator MCP endpoint.
 
-It is designed for the common setup where Docmost stays containerized on one
-server while GitHub Copilot CLI or another MCP-compatible client connects from a
-different machine.
+The system has two halves:
 
-## Architectural split: server bridge vs client/helper
+- **Server** (this repo) - runs as containers next to a live Docmost stack. It owns Docmost
+  connectivity, bridge version truth, content normalization, the reconcile brain, the REST and
+  helper-facing routes, and a background observer worker.
+- **Helper** (`helper/`) - a small client-side stdio MCP. It is the consuming model's ONLY
+  Docmost surface. It owns all local replica file IO and runs the automated reconcile by
+  calling the server over REST.
 
-| Surface | Owns | Must not assume |
+## Two consumer surfaces (read this first)
+
+There are two MCP-shaped surfaces, and they are not interchangeable:
+
+| Surface | Who uses it | Transport | Role |
+|---|---|---|---|
+| **docmost-helper** | the model (Claude Code) | stdio | The model's only Docmost surface. Reconcile-first reads, writes, and sync. |
+| **`/mcp`** | a human operator | streamable HTTP | Quiet inspection / emergency override only. NOT the model's workflow surface. |
+
+The helper reaches the server over REST (`/v1`, `/helper/v1`, `/auto-mcp`) - never over `/mcp`.
+Do not register the operator `/mcp` HTTP MCP for the model. The model talks to `docmost-helper`,
+which talks to the server. See `helper/README.md` for helper registration.
+
+## Architecture
+
+```
+  Claude Code (model)
+        |
+        |  stdio (mcp__docmost-helper__*)
+        v
+  docmost-helper  (helper/server.py)            <-- the model's surface; owns local replica IO
+        |
+        |  REST  /v1  /helper/v1  /auto-mcp
+        v
+  +-----------------------------------------------------------+
+  |  docmost-mcp container  (FastAPI, app/main.py)            |
+  |    REST reads            -> app/query/*                   |
+  |    bridge writes         -> app/bridge/services/*         |
+  |    helper CRUD + reconcile -> app/helper_api, app/reconcile|
+  |    batch + observe       -> app/auto_mcp                  |
+  |    legacy client sync    -> app/sync                      |
+  |    operator /mcp         -> app/mcp_server                |
+  +----------+---------------------------+--------------------+
+             | psycopg2 (read)           | bridge state (psycopg2)
+             v                           v
+     Docmost PostgreSQL          bridge PostgreSQL (bridge-db)
+             ^
+             | Docmost REST API (writes: create / update / move / delete)
+             |
+  docmost-mcp-worker  (app/observer/worker.py)  <-- interval observer over ALL spaces
+```
+
+### Containers (`docker-compose.yml`)
+
+| Service | Container | Purpose |
 |---|---|---|
-| Server-side bridge (`docmost-mcp-server`) | Docmost connectivity, bridge DB state, normalization, diffing, observer runs, write intents/receipts, REST routes, and MCP tools | It does **not** own or scan the client's working copy as the source of truth |
-| Client-side MCP consumer / helper | local replica file IO, working-copy selection, page edits, locally stored sync-base metadata, and deciding when to call status/diff/pull/push/force | It does **not** bypass the bridge by talking to the Docmost codebase directly |
+| `bridge-db` | `docmost-mcp-bridge-db` | PostgreSQL 16 holding bridge-owned version state |
+| `docmost-mcp` | `docmost-mcp` | FastAPI app: REST + helper routes + operator `/mcp` |
+| `docmost-mcp-worker` | `docmost-mcp-worker` | `app.observer.worker --loop`: folds direct-Docmost-UI edits into bridge state every `WORKER_INTERVAL_SECONDS` (default 15s) over every space |
 
-For normal local-first documentation work, the consuming model uses the **docmost-helper**
-stdio MCP: it passes one id to `sync_space` / `sync_page` / `sync_page_tree` and the helper
-runs the full automated reconcile against the server's `POST /v1/spaces/{id}/reconcile` brain
-(push / create / pull / move plus local+remote version alignment), surfacing only conflicts
-and deletions for a decision. The server-side `/mcp` endpoint is a quiet operator/inspection
-fallback only — not the model's workflow surface. Direct `create_page`, `update_page`, and
-`delete_page` remain available as low-level bridge actions.
+### Two databases
 
-## MCP capabilities
+- **Docmost PostgreSQL** - the live Docmost database. The bridge reads pages and spaces from
+  it directly (`app/query/docmost.py`) and writes through Docmost's REST API
+  (`app/write/docmost.py`). The bridge never alters the Docmost schema.
+- **Bridge PostgreSQL** (`bridge-db`) - bridge-owned state: page heads, version history, write
+  intents/receipts, observer checkpoints, and local-page snapshots. Schema is applied from
+  `migrations/bridge/*.sql` on first use (`app/bridge/db/schema.py`).
 
-The `/mcp` endpoint gives GitHub Copilot CLI and other MCP-compatible clients a
-remote Docmost toolset over streamable HTTP.
+### Module map
 
-| Capability | Tools |
+| Path | Responsibility |
 |---|---|
-| Resolve the correct Docmost space | `list_spaces`, `get_space` |
-| Inspect hierarchy and page listings | `get_space_tree`, `list_pages` |
-| Read full page content as markdown | `get_page` |
-| Inspect replica rules and layout | `get_replica_standards`, `resolve_replica_directory_name`, `get_replica_structure` |
-| Scaffold a local-only replica page | `create_local_replica_page` |
-| Inspect sync status and diff clashes | `get_sync_status`, `get_sync_diff` |
-| Pull or push a local working-copy replica | `pull_replica`, `push_replica` |
-| Create or delete spaces | `create_space`, `delete_space` |
-| Create, update, or delete pages | `create_page`, `update_page`, `delete_page` |
+| `app/main.py` | FastAPI app factory, router registration, `/mcp` mount, MCP session lifespan |
+| `app/query/docmost.py` | Direct Docmost DB reads (spaces, pages, tree); ProseMirror -> markdown render |
+| `app/query/prosemirror.py` | Deterministic ProseMirror-JSON to markdown renderer (strips volatile node ids) |
+| `app/query/db.py` | Docmost DB connection / DSN, `DocmostConnectionError` |
+| `app/query/replica.py` | Server-side replica structure/standards (operator + `/sync` routes) |
+| `app/query/routers/` | REST read routes: health, spaces, pages, replica |
+| `app/write/docmost.py` | Docmost REST write client (create/update/move/delete page, create/delete space) |
+| `app/write/routers/` | Direct REST write routes (`crud` caller mode) |
+| `app/bridge/db/` | Bridge DB connection + schema bootstrap |
+| `app/bridge/repositories/` | Bridge tables: page_heads, page_versions, write_intents, write_receipts, observer_checkpoints, snapshots |
+| `app/bridge/services/write_pipeline.py` | All bridge writes: intents/receipts, canonical finalize, compensating rollback |
+| `app/bridge/services/canonical.py` | The single revision-hash derivation point (Docmost read-back) |
+| `app/bridge/services/versioning.py` | `revision_hash`, head-alignment checks, snapshots |
+| `app/bridge/services/observer.py` | Folds external/manual Docmost edits into bridge state |
+| `app/bridge/services/bootstrap.py` | `ensure_space_bootstrapped` - backfills existing spaces |
+| `app/reconcile/` | The reconcile brain: three-way classification + `/reconcile`, `/resolve`, `/confirm-deletion` |
+| `app/helper_api/` | Helper-facing CRUD + snapshot routes (`/v1`, `/helper/v1`) |
+| `app/auto_mcp/` | Batch apply + observe routes (`/auto-mcp`) |
+| `app/sync/` | Legacy client-state sync routes (`/spaces/{id}/sync/*`) |
+| `app/contract.py` | `/v1/contract` version handshake, `/v1/health` |
+| `app/observer/worker.py` | Interval observer loop over all spaces |
+| `app/mcp_server.py` | Operator `/mcp` FastMCP surface + operator-only instructions |
+| `migrations/bridge/*.sql` | Bridge database schema |
+| `helper/server.py` | Helper stdio MCP tool definitions (the model's surface) |
+| `helper/helper/client.py` | REST client to the server |
+| `helper/helper/sync.py` | Helper reconcile pipeline + low-level escape hatches |
+| `helper/helper/replica.py` | Local replica file IO, `_replica.json` discovery by space id |
 
-All page content is markdown in and markdown out.
+## The bridge version model
 
-## REST capabilities
+Every page the bridge knows about has a **head** (`page_heads`) carrying a
+`current_revision_hash`, plus an append-only `page_versions` history. The revision hash is:
 
-The REST API exposes the same core access patterns over HTTP for direct
-integrations, manual inspection, and non-MCP automation.
+```
+revision_hash = sha256( canonical_title + "\n---\n" + canonical_content )
+```
+
+It is **bridge-internal** - it is never stored in Docmost. It is derived at exactly one place,
+`app/bridge/services/canonical.py`, always from Docmost's stored content read back and rendered
+to markdown (ProseMirror -> markdown, with volatile node ids stripped). Because every surface
+(helper push, direct CRUD, the worker/observer, and direct Docmost-UI edits) ends up as the same
+stored Docmost content and is hashed the same way, a write-origin head and an observe-origin head
+for the same content are identical. There is no input-vs-rendered drift.
+
+Writes go through `app/bridge/services/write_pipeline.py` in one of three caller modes:
+
+- `helper` / `auto_sync` - require head alignment (an expected base revision hash) so a stale
+  client cannot clobber a newer head.
+- `crud` - no alignment requirement; used by the direct `/spaces/*` REST write routes.
+
+The **worker** (`docmost-mcp-worker`) runs `observe_space` over every space on an interval. It
+confirms pending bridge writes and records any change made outside the bridge (for example a
+manual edit in the Docmost UI) as a new version with source `external_observer`. This means the
+bridge tracks versions for all spaces whether or not a model has ever touched them, and a space
+that already has content is backfilled on first contact.
+
+## Normal workflow: reconcile
+
+The model only initiates a sync; the helper plus the server reconcile brain do all versioning,
+diffing, and file IO.
+
+1. Edit `page.md` locally and/or restructure the replica (move a page directory to re-parent).
+2. Call `sync_space(space_id)` (or `sync_page` / `sync_page_tree`) on `docmost-helper` with only
+   the id(s).
+3. The helper builds the local page set plus the last-synced `_tree.json`, calls
+   `POST /v1/spaces/{id}/reconcile`, and applies the result locally: pushes local edits, creates
+   local-only pages, pulls remote changes, materializes new remote pages, applies moves/re-parents,
+   and aligns both the bridge head and the local `_meta.json` base revision hash.
+4. The result returns `synced_count` plus `applied`, and only the items needing a decision:
+   `conflicts` (each with `remote_content`, `local_content`, diff) and `deletion_confirmations`.
+   - Conflict: inspect, then `resolve_conflict(space_id, page_id, merged_content)` (pushed aligned
+     to the current remote head, no force).
+   - Deletion: `confirm_deletion(space_id, page_id, direction)` (`remote` soft-deletes the remote
+     page and drops the local copy; `local` accepts a remote deletion).
+
+A clean sync needs no force and surfaces no conflicts. Classification is three-way (local vs
+last-synced tree vs bridge head) across content, structure (parent/position/icon), and existence.
+
+## Local replica (helper-owned)
+
+The replica is a local directory tree the helper maintains; Docmost remains the long-term source
+of truth. Each page is a directory containing:
+
+- `page.md` - markdown content (owned by the helper and the model; edit locally, push via helper)
+- `_meta.json` - page identity + sync base (owned by the helper; do not edit by hand)
+
+The replica root also holds `_replica.json` (space header: `space_id`, `slug`, `name`) and
+`_tree.json` (the last-synced tree snapshot). The helper resolves which replica to use by
+scanning for a `_replica.json` whose `space_id` matches, under `DOCMOST_REPLICA_BASE` (default:
+the helper's current working directory). Pass an explicit `local_root` to override.
+
+In this repository the tracked replica of the service's own documentation space lives at
+`Docmost-mcp-crud/`.
+
+## REST surface
+
+The REST API and helper-facing routes are served by FastAPI. The `/mcp` endpoint is the operator
+surface only.
+
+### Read routes (direct Docmost DB)
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/health` | process health check only; does not verify database connectivity |
-| `GET` | `/spaces` | list all non-deleted spaces |
-| `GET` | `/spaces/{space_id}` | get one non-deleted space |
-| `GET` | `/spaces/{space_id}/tree` | get the nested page tree for one space |
-| `GET` | `/spaces/{space_id}/replica-structure` | get the deterministic local replica layout for one space |
-| `GET` | `/spaces/{space_id}/pages` | list all non-deleted pages in a space (no content) |
-| `GET` | `/spaces/{space_id}/pages/{page_id}` | get one page with full markdown content |
-| `GET` | `/replica/standards` | get local replica naming, structure, and sync rules |
-| `GET` | `/replica/resolve-directory-name` | resolve the correct local directory name for a page title |
-| `GET` | `/spaces/{space_id}/sync/status` | get sync status for a space replica or chosen local working copy |
-| `GET` | `/spaces/{space_id}/sync/diff` | get line-based local-vs-remote diff hunks for one page or all unsynced pages |
-| `POST` | `/spaces` | create a new space |
-| `DELETE` | `/spaces/{space_id}` | permanently delete a space and all its pages |
-| `POST` | `/spaces/{space_id}/pages` | create a page (add `parent_page_id` for a child page) |
-| `PUT` | `/spaces/{space_id}/pages/{page_id}` | update a page title and/or content (markdown) |
-| `DELETE` | `/spaces/{space_id}/pages/{page_id}` | soft-delete a page |
-| `POST` | `/auto-mcp/spaces/{space_id}/pages/apply` | helper-facing batch create/update path using bridge version checks and bridge state |
-| `POST` | `/auto-mcp/spaces/{space_id}/observe` | run one observer pass and record remote changes in bridge state |
-| `POST` | `/v1/spaces/{space_id}/reconcile` | classify + apply a scoped bidirectional reconcile; returns synced / applied / conflicts / deletion_confirmations |
-| `POST` | `/v1/spaces/{space_id}/pages/{page_id}/resolve` | resolve a conflict: push merged content aligned to the current remote head (no force) |
-| `POST` | `/v1/spaces/{space_id}/pages/{page_id}/confirm-deletion` | apply a confirmed deletion (direction `remote` or `local`) |
-| `GET` | `/v1/contract` | helper&lt;-&gt;server contract version and capabilities |
-| `POST` | `/spaces/{space_id}/sync/local-pages` | scaffold a new local-only page in the chosen local working copy |
-| `POST` | `/spaces/{space_id}/sync/pull` | materialize or refresh the chosen local working copy from remote Docmost |
-| `POST` | `/spaces/{space_id}/sync/push` | push chosen local working-copy changes back to remote Docmost |
+| `GET` | `/health` | process liveness only (does not check the database) |
+| `GET` | `/spaces` | list non-deleted spaces |
+| `GET` | `/spaces/{space_id}` | get one space |
+| `GET` | `/spaces/{space_id}/tree` | nested page tree |
+| `GET` | `/spaces/{space_id}/pages` | flat page list |
+| `GET` | `/spaces/{space_id}/pages/{page_id}` | one page with markdown content |
+| `GET` | `/spaces/{space_id}/replica-structure` | server-side replica layout for a space |
+| `GET` | `/replica/standards` | replica naming/structure/sync rules |
+| `GET` | `/replica/resolve-directory-name` | resolve a local directory name for a title |
 
-Bridge-tracked page writes require both the Docmost app credentials and the
-bridge database config from `.env`. Content is markdown in and out, and page
-updates support `operation: replace | append | prepend`.
+### Direct write routes (bridge pipeline, `crud` mode)
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/spaces` | create a space |
+| `DELETE` | `/spaces/{space_id}` | permanently delete a space and its pages |
+| `POST` | `/spaces/{space_id}/pages` | create a page (add `parent_page_id` for a child) |
+| `PUT` | `/spaces/{space_id}/pages/{page_id}` | update title and/or content (`replace`/`append`/`prepend`) |
+| `DELETE` | `/spaces/{space_id}/pages/{page_id}` | soft-delete a page |
+
+### Helper-facing routes (served under both `/v1` and `/helper/v1`)
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/contract` | helper <-> server contract version + capabilities |
+| `GET` | `/v1/health` | process health |
+| `GET` | `/v1/spaces`, `/v1/spaces/{id}`, `/v1/spaces/{id}/tree` | reads |
+| `GET` | `/v1/spaces/{id}/pages`, `/v1/spaces/{id}/pages/{pid}` | reads (page carries `current_revision_hash`) |
+| `POST`/`DELETE` | `/v1/spaces`, `/v1/spaces/{id}` | create / delete space (`helper` mode) |
+| `POST`/`PUT`/`DELETE` | `/v1/spaces/{id}/pages[...]` | create / update / delete page (`helper` mode) |
+| `POST` | `/v1/spaces/{id}/pages/{pid}/move` | move / re-parent a page (id-preserving) |
+| `POST`/`GET`/`DELETE` | `/v1/spaces/{id}/pages/{pid}/snapshots[...]` | local-page snapshots (stash) |
+| `POST` | `/v1/spaces/{space_id}/reconcile` | classify + apply a scoped bidirectional reconcile (four buckets) |
+| `POST` | `/v1/spaces/{id}/pages/{pid}/resolve` | resolve a conflict aligned to the current remote head |
+| `POST` | `/v1/spaces/{id}/pages/{pid}/confirm-deletion` | apply a confirmed deletion (`remote`/`local`) |
+
+### Automation + legacy sync routes
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/auto-mcp/spaces/{space_id}/pages/apply` | batch create/update through the bridge pipeline |
+| `POST` | `/auto-mcp/spaces/{space_id}/observe` | run one observer pass for a space |
+| `POST` | `/spaces/{space_id}/sync/status` | client-state sync status |
+| `POST` | `/spaces/{space_id}/sync/diff` | client-state diff hunks |
+| `POST` | `/spaces/{space_id}/sync/local-pages` | plan a new local-only page |
+| `POST` | `/spaces/{space_id}/sync/pull` | pull remote into a client working copy |
+| `POST` | `/spaces/{space_id}/sync/push` | push a client working copy to remote |
+
+All page content is markdown in and markdown out. The page title is a separate parameter - never
+an H1 in the body. Use plain ASCII punctuation.
 
 ## Prerequisites
 
-Before setup, make sure you have:
+- A running Docmost environment with PostgreSQL. **Docmost v0.71.1 or later is required** for
+  content write operations (older versions silently discard the `content` field).
+- Docker and Docker Compose on the server that hosts Docmost.
+- Network access from this service to the live Docmost PostgreSQL container.
+- A separate PostgreSQL database for bridge-owned state (provided by the `bridge-db` service).
 
-### Server-side requirements
-
-1. a running Docmost environment with PostgreSQL - **v0.71.1 or later required** for content write operations to function correctly (see note below)
-2. Docker and Docker Compose available on the server where this service will run
-3. network access from this service container to the live Docmost PostgreSQL container
-4. the Docmost database credentials or DSN
-5. a separate PostgreSQL database for bridge-owned page heads, version history, receipts, and observer checkpoints
-
-### Client-side requirements
-
-1. network access from your Copilot CLI or other MCP client machine to the published Docmost MCP URL
-2. a local working copy if you plan to use the local-first replica workflow
-3. a client/helper that can send current local page state to the bridge for sync operations
-
-> **Docmost version requirement - v0.71.1+**
->
-> Content write operations (creating and updating page content) require Docmost v0.71.1 or later.
-> Earlier versions silently discard the content field, resulting in pages being created empty.
->
-> Upgrading Docmost carries no risk to your existing page data. Docmost upgrades are
-> non-destructive - your spaces, pages, and history are stored in PostgreSQL and are not
-> affected by a container image update. To upgrade, pull the latest image and recreate
-> the container:
->
-> ```bash
-> docker compose pull docmost && docker compose up -d docmost
-> ```
->
-> To check which version you are currently running:
+> **Checking your Docmost version**
 >
 > ```bash
 > docker exec docmost cat /app/apps/server/package.json | grep '"version"' | head -1
 > ```
+>
+> Docmost upgrades are non-destructive (data lives in PostgreSQL):
+>
+> ```bash
+> docker compose pull docmost && docker compose up -d docmost
+> ```
 
-## Server-side bridge setup
+## Server setup
 
-Two setup methods are available. Both result in the same running service.
+The server runs as three containers joined to the same external Docker network as Docmost.
 
-### Option A: from the published Docker image (recommended)
-
-Pull the image directly from GitHub Container Registry - no clone or build step needed:
-
-```bash
-mkdir -p /opt/docmost-mcp && cd /opt/docmost-mcp
-```
-
-Create a `docker-compose.yml`:
-
-```yaml
-services:
-  bridge-db:
-    image: postgres:16
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${BRIDGE_DB_NAME}
-      POSTGRES_USER: ${BRIDGE_DB_USER}
-      POSTGRES_PASSWORD: ${BRIDGE_DB_PASSWORD}
-    volumes:
-      - bridge_db_data:/var/lib/postgresql/data
-    networks:
-      - docmost_network
-
-  docmost-mcp:
-    container_name: docmost-mcp
-    image: ghcr.io/isak-landin/docmost-mcp-api:latest
-    restart: unless-stopped
-    depends_on:
-      - bridge-db
-    env_file: .env
-    environment:
-      DOCMOST_DB_HOST: ${DOCMOST_DB_HOST}
-      DOCMOST_DB_PORT: ${DOCMOST_DB_PORT}
-      DOCMOST_DB_NAME: ${DOCMOST_DB_NAME}
-      DOCMOST_DB_USER: ${DOCMOST_DB_USER}
-      DOCMOST_DB_PASSWORD: ${DOCMOST_DB_PASSWORD}
-      BRIDGE_DB_HOST: ${BRIDGE_DB_HOST}
-      BRIDGE_DB_PORT: ${BRIDGE_DB_PORT}
-      BRIDGE_DB_NAME: ${BRIDGE_DB_NAME}
-      BRIDGE_DB_USER: ${BRIDGE_DB_USER}
-      BRIDGE_DB_PASSWORD: ${BRIDGE_DB_PASSWORD}
-      LISTEN_HOST: ${LISTEN_HOST:-0.0.0.0}
-      LISTEN_PORT: ${LISTEN_PORT:-8099}
-      DOCMOST_APP_URL: ${DOCMOST_APP_URL}
-      DOCMOST_USER_EMAIL: ${DOCMOST_USER_EMAIL}
-      DOCMOST_USER_PASSWORD: ${DOCMOST_USER_PASSWORD}
-    ports:
-      - "${EXTERNAL_PORT:-8099}:${LISTEN_PORT:-8099}"
-    networks:
-      - docmost_network
-
-networks:
-  docmost_network:
-    external: true
-    name: ${DOCMOST_NETWORK_NAME:-docmost_default}
-
-volumes:
-  bridge_db_data:
-```
-
-Then continue from [step 2](#2-confirm-the-shared-docker-network-name) below. Skip the build step - replace `docker compose up --build -d` with `docker compose up -d`.
-
----
-
-### Option B: from source
-
-Create the target directory on the same server that hosts the live Docmost deployment:
+### 1. Place the project on the Docmost host
 
 ```bash
-mkdir -p /opt/docmost-mcp
+git clone <repo-url> /opt/docmost-mcp && cd /opt/docmost-mcp
 ```
 
-Then either clone the repository into that directory:
+### 2. Confirm the shared Docker network
 
-```bash
-git clone https://github.com/Isak-Landin/docmost-mcp-server.git /opt/docmost-mcp
-cd /opt/docmost-mcp
-```
-
-Or copy an existing local checkout into place:
-
-```bash
-cp -a /path/to/docmost-mcp-server/. /opt/docmost-mcp/
-cd /opt/docmost-mcp
-```
-
-### 2. Confirm the shared Docker network name
-
-By default this project joins the Docker network named `docmost_default`.
-
-Set `DOCMOST_NETWORK_NAME` in your `.env` if your Docmost stack uses a different network name:
-
-```env
-DOCMOST_NETWORK_NAME=my_custom_network
-```
-
-To find your Docmost network name:
+This project joins the external network named by `DOCMOST_NETWORK_NAME` (default
+`docmost_default`). Find your Docmost network:
 
 ```bash
 docker network ls | grep docmost
 ```
 
-### 3. Create the runtime environment file
-
-Copy the example file:
+### 3. Create `.env`
 
 ```bash
 cp env.example .env
 ```
 
-Then edit `.env`.
-
-### 4. Fill in `.env`
-
-You can configure the database in one of two ways.
-
-#### Option A: full DSN
-
-Use `DOCMOST_DB_URL` if you want a single connection string:
+Fill in the values:
 
 ```env
-DOCMOST_DB_URL=postgresql://<DB_USER>:<DB_PASSWORD>@<DB_HOST>:5432/<DB_NAME>
-```
-
-#### Option B: separate values
-
-If you do not use `DOCMOST_DB_URL`, set the individual values:
-
-```env
-DOCMOST_DB_HOST=<DOCMOST_DB_HOSTNAME_ON_DOCKER_NETWORK>
+# Docmost database (read path). Use DOCMOST_DB_URL or the individual values.
+DOCMOST_DB_URL=postgresql://docmost:STRONG_DB_PASSWORD@db:5432/docmost
+DOCMOST_DB_HOST=db
 DOCMOST_DB_PORT=5432
-DOCMOST_DB_NAME=<DOCMOST_DB_NAME>
-DOCMOST_DB_USER=<DOCMOST_DB_USER>
-DOCMOST_DB_PASSWORD=<DOCMOST_DB_PASSWORD>
-```
+DOCMOST_DB_NAME=docmost
+DOCMOST_DB_USER=docmost
+DOCMOST_DB_PASSWORD=STRONG_DB_PASSWORD
 
-#### Bridge state database
-
-The bridge also needs its own PostgreSQL database for bridge-owned state.
-Use `BRIDGE_DB_URL` if you want a single connection string:
-
-```env
-BRIDGE_DB_URL=postgresql://<BRIDGE_DB_USER>:<BRIDGE_DB_PASSWORD>@<BRIDGE_DB_HOST>:5432/<BRIDGE_DB_NAME>
-```
-
-If you do not use `BRIDGE_DB_URL`, set the individual values:
-
-```env
+# Bridge-owned state database (the bridge-db service)
+BRIDGE_DB_URL=postgresql://docmost_bridge:STRONG_BRIDGE_DB_PASSWORD@bridge-db:5432/docmost_bridge
 BRIDGE_DB_HOST=bridge-db
 BRIDGE_DB_PORT=5432
 BRIDGE_DB_NAME=docmost_bridge
 BRIDGE_DB_USER=docmost_bridge
-BRIDGE_DB_PASSWORD=<BRIDGE_DB_PASSWORD>
-```
+BRIDGE_DB_PASSWORD=STRONG_BRIDGE_DB_PASSWORD
 
-#### API and MCP listen values
+# Docmost application (write path). Token is held in memory only.
+DOCMOST_APP_URL=http://docmost:3000
+DOCMOST_USER_EMAIL=<docmost-user-email>
+DOCMOST_USER_PASSWORD=<docmost-user-password>
 
-These control where the container listens:
-
-```env
-LISTEN_HOST=0.0.0.0
-LISTEN_PORT=8099
-EXTERNAL_PORT=8099
-```
-
-Meaning:
-
-- `LISTEN_HOST`: bind host inside the container
-- `LISTEN_PORT`: port inside the container
-- `EXTERNAL_PORT`: port published on the server
-
-#### Example full `.env`
-
-```env
-DOCMOST_DB_URL=
-DOCMOST_DB_HOST=<DOCMOST_DB_HOSTNAME_ON_DOCKER_NETWORK>
-DOCMOST_DB_PORT=5432
-DOCMOST_DB_NAME=<DOCMOST_DB_NAME>
-DOCMOST_DB_USER=<DOCMOST_DB_USER>
-DOCMOST_DB_PASSWORD=<DOCMOST_DB_PASSWORD>
-
-BRIDGE_DB_URL=
-BRIDGE_DB_HOST=bridge-db
-BRIDGE_DB_PORT=5432
-BRIDGE_DB_NAME=docmost_bridge
-BRIDGE_DB_USER=docmost_bridge
-BRIDGE_DB_PASSWORD=<BRIDGE_DB_PASSWORD>
-
-DOCMOST_APP_URL=http://<DOCMOST_CONTAINER_NAME>:3000
-DOCMOST_USER_EMAIL=<YOUR_DOCMOST_USER_EMAIL>
-DOCMOST_USER_PASSWORD=<YOUR_DOCMOST_USER_PASSWORD>
-
+# Docker network shared with the Docmost stack
 DOCMOST_NETWORK_NAME=docmost_default
 
+# Bind + exposure
 LISTEN_HOST=0.0.0.0
 LISTEN_PORT=8099
 EXTERNAL_PORT=8099
 
-MCP_ALLOWED_HOSTS=<YOUR_DOCMOST_MCP_HOSTNAME>
+# MCP transport: Host headers the /mcp transport accepts (reverse proxy domain).
+# Leave empty to disable DNS-rebinding protection (not recommended for production).
+MCP_ALLOWED_HOSTS=mcp.yourdomain.com
+
+# Worker observe interval (seconds)
+WORKER_INTERVAL_SECONDS=15
 
 MODE=prod
 LOG_LEVEL=INFO
 ```
 
-### 5. Build and start the container
-
-**Option A (image):**
+### 4. Build and start
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
-**Option B (source):**
+This builds and starts `bridge-db`, `docmost-mcp`, and `docmost-mcp-worker`, attaches them to the
+external Docmost network, and publishes the API on `EXTERNAL_PORT`.
 
-```bash
-docker compose up --build -d
-```
-
-This will:
-
-1. pull the published image (Option A) or build from `Dockerfile` (Option B)
-2. create or recreate the `docmost-mcp` container
-3. attach it to the external Docker network set by `DOCMOST_NETWORK_NAME`
-4. expose the service on the configured external port
-
-### 6. Confirm the container is running
+### 5. Verify
 
 ```bash
 docker compose ps
+curl http://<host>:8099/health          # -> {"ok": true}  (process only)
+curl http://<host>:8099/spaces          # -> 200 with spaces, or 503 if the DB is unreachable
 ```
 
-You should see the `docmost-mcp` service/container running.
+- REST docs: `http://<host>:8099/docs`
+- Operator MCP endpoint: `http://<host>:8099/mcp` (or `https://<host>/mcp` behind a proxy)
 
-If you need logs:
+If the Docmost database is unreachable, read routes return `503` with
+`{"detail":"Docmost database connection failed"}`.
 
-```bash
-docker compose logs -f
-```
+### Behind a reverse proxy
 
-### 7. Verify the HTTP endpoints
+Terminate TLS, expose a stable hostname, and forward `/mcp` plus the REST routes to the
+container. Set `MCP_ALLOWED_HOSTS` to the proxied domain.
 
-Use placeholders for your real host name or IP:
+## Helper setup (the model's surface)
 
-```bash
-curl http://<YOUR_DOCMOST_MCP_HOST>:8099/health
-```
-
-Expected response:
-
-```json
-{"ok":true}
-```
-
-This only confirms that the service process is reachable. It does **not** confirm that
-the Docmost database is reachable.
-
-Open the REST docs:
-
-```text
-http://<YOUR_DOCMOST_MCP_HOST>:8099/docs
-```
-
-MCP endpoint:
-
-```text
-http://<YOUR_DOCMOST_MCP_HOST>:8099/mcp
-```
-
-If you are putting this behind a reverse proxy, the MCP URL may instead be:
-
-```text
-https://<YOUR_DOCMOST_MCP_HOST>/mcp
-```
-
-To verify a database-backed route as part of manual testing, also try:
-
-```bash
-curl http://<YOUR_DOCMOST_MCP_HOST>:8099/spaces
-```
-
-If the database is unreachable, the read routes return:
-
-- REST: `503` with `{"detail":"Docmost database connection failed"}`
-- MCP: tool error with `Docmost database connection failed`
-
-To inspect the exact local-replica projection for one space, use:
-
-```text
-http://<YOUR_DOCMOST_MCP_HOST>:8099/spaces/<SPACE_ID>/replica-structure
-```
-
-To inspect replica naming and sync rules without a space-specific lookup, use:
-
-```text
-http://<YOUR_DOCMOST_MCP_HOST>:8099/replica/standards
-```
-
-#### Write endpoints
-
-Write routes require `DOCMOST_APP_URL`, `DOCMOST_USER_*`, and the bridge DB
-config in `.env`. Authentication is transparent, bridge state is recorded
-before and after page writes, and the full route list is in
-[REST capabilities](#rest-capabilities).
-
-### 8. Optional: place behind HTTPS or a reverse proxy
-
-If Copilot CLI runs on another machine, HTTPS is usually the cleanest approach.
-
-Typical reverse proxy responsibilities:
-
-- terminate TLS
-- expose a stable hostname
-- forward `/mcp` to the container
-- forward `/health`, `/docs`, and REST routes if you want those externally reachable
-
-Example placeholder public URL:
-
-```text
-https://<YOUR_DOCMOST_MCP_HOST>/mcp
-```
-
-## Client-side GitHub Copilot CLI setup
-
-Everything above is server-side deployment. The Copilot CLI machine does not run
-the bridge codebase or host the Docmost integration itself - it only connects to
-the already-running remote bridge and manages a local working copy when replica
-sync is needed.
-
-Because the MCP endpoint is remote and container-hosted, your GitHub Copilot CLI
-machine does **not** need any local wrapper script for Docmost MCP.
-
-Copilot CLI only needs a configured MCP server pointing at the remote URL.
-
-Copilot CLI already includes the GitHub MCP server by default. Docmost MCP is an
-additional remote MCP server you add to extend Copilot CLI with Docmost access.
-
-Configured MCP server details are saved per Copilot config home. Create a
-dedicated Docmost-only home first:
-
-```bash
-mkdir -p "$HOME/copilot-docmost"
-export COPILOT_HOME="$HOME/copilot-docmost"
-```
-
-That keeps Docmost MCP configuration and Docmost-specific instructions out of
-your normal default Copilot home.
-
-### Recommended layout
-
-Use these two files inside the dedicated Docmost home:
-
-```text
-$HOME/copilot-docmost/mcp-config.json
-$HOME/copilot-docmost/copilot-instructions.md
-```
-
-Keep your normal:
-
-```text
-~/.copilot/copilot-instructions.md
-```
-
-generic. Do **not** keep Docmost-specific behavior in the default global
-instructions file, or it will clash with unrelated work.
-
-### Recommended start command
-
-```bash
-mkdir -p "$HOME/copilot-docmost"
-export COPILOT_HOME="$HOME/copilot-docmost"
-copilot
-```
-
-### Add the MCP server
-
-Inside Copilot CLI:
-
-```text
-/mcp add
-```
-
-Then enter the remote HTTP MCP URL:
-
-```text
-https://<YOUR_DOCMOST_MCP_HOST>/mcp
-```
-
-Allow these tools:
-
-```text
-list_spaces
-get_space
-get_space_tree
-get_replica_standards
-resolve_replica_directory_name
-get_replica_structure
-create_local_replica_page
-get_sync_status
-get_sync_diff
-pull_replica
-push_replica
-list_pages
-get_page
-create_space
-delete_space
-create_page
-update_page
-delete_page
-```
-
-After saving with `/mcp add`, verify that:
-
-- the saved URL ends with `/mcp`
-- there is no stray whitespace in the URL
-- the allowlist includes the tree and replica tools, not just page lookup tools
-
-### Recommended `mcp-config.json`
-
-Store this in:
-
-```text
-$COPILOT_HOME/mcp-config.json
-```
-
-```json
-{
-  "mcpServers": {
-    "docmost-mcp": {
-      "type": "http",
-      "url": "https://<YOUR_DOCMOST_MCP_HOST>/mcp",
-      "tools": [
-        "list_spaces",
-        "get_space",
-        "get_space_tree",
-        "list_pages",
-        "get_page",
-        "get_replica_standards",
-        "resolve_replica_directory_name",
-        "get_replica_structure",
-        "create_local_replica_page",
-        "get_sync_status",
-        "get_sync_diff",
-        "pull_replica",
-        "push_replica",
-        "create_space",
-        "delete_space",
-        "create_page",
-        "update_page",
-        "delete_page"
-      ]
-    }
-  }
-}
-```
-
-### Recommended `copilot-instructions.md`
-
-Store this in:
-
-```text
-$COPILOT_HOME/copilot-instructions.md
-```
-
-```md
-# Instructions
-We are working with extremely complex and sensitive structures.
-Therefor we can't afford your common assumptions and usual approach to be implemented.
-It is essential that all following rules are followed.
-
-Clarification. Internal documentation is not docs that exist in the repository you have access to. It is the copilot internal documentation for a session.
-
-- Always read internal documentation before attempting to answer or take action if action is not external documentation aimed.
-- Always update internal documentation when new insight is established which does not match the current internal documentation.
-- Always update internal documentation determined that previously mentioned additions, edits and deletes were accepted and not reflected in internal documentation.
-- Don't Update documentation, project or internal, until change is implemented.
-- Don't update project docmost documentation unless asked for.
-- Mention deprecated project documentation when noticed to be deprecated.
-- Keep ownership boundaries strict.
-- Prefer simple return contracts.
-- Don't expect existence of code or non-existence of code when asked or derived addition or creation of code conclusion.
-- Always verify that other code, module or package does not exist as owner of wanted implementation. Since we never want to duplicate codebase responsibilities.
-- Only make additions or creations when required to keep project codebase integrity or required as a result of avoidance to mix ownership.
-- Don't guess or invent new rules or module ownerships.
-
-## Surface split
-
-- the remote `docmost-mcp` service is the server-side bridge; it owns Docmost auth/integration, bridge DB state, normalization, comparison, and remote writes
-- the Copilot CLI machine is the client; it owns local replica file IO, working-copy selection, page edits, and any locally stored sync-base metadata
-- do not assume the server can see or scan the client filesystem; pass current client-local page state explicitly in replica and sync calls
-- use `push_replica` and `pull_replica` as the normal local-first workflow; direct `create_page`, `update_page`, and `delete_page` are low-level remote bridge actions, not the default replacement for a client-owned replica
-
-## Repo and runtime workflow
-
-- Always make repository changes locally. Never make source changes directly on a remote host.
-- Treat hosted runtime environments as remote. Do not host the project locally.
-- Use remote logs and remote runtime behavior to debug deployed issues, then implement the fix locally in the repo.
-- Do not use remote edits as a substitute for local implementation. Remote environments are for observation, logs, validation, and deployment state, not source authoring.
-
-## Docmost MCP - reading
-
-Use the docmost-mcp MCP server as the primary long-term documentation source when the task is about Docmost-backed project documentation or the user directs work through Docmost.
-Remote Docmost pages are the authoritative long-term representation of the project - deprecation is not the default assumption.
-Only treat a page as stale or outdated when there is a clear, verified conflict with current code or runtime behavior, not merely because a local replica was edited.
-
-If documentation, documented behavior, page names, or relevant file/path references are mentioned without full context and Docmost is part of the task, consult docmost-mcp before guessing.
-Internal session documentation and Docmost documentation are complementary - use both when Docmost is in scope. Neither replaces the other.
-When using docmost-mcp, always resolve the correct space first with list_spaces, then inspect pages within that space.
-Pages are space-scoped and are not global lookups.
-Use get_space_tree when you need the nested structure of a space.
-Use list_pages for a flat listing. Use get_page for a single page with full markdown content.
-
-## Local replica management
-
-Maintain or create a local-first replica in the working copy you are editing. If you do not pass
-`local_root`, the service uses its default replica location at `./{space_name}-replica/`.
-No spaces are allowed in any local replica directory or file name. Replace spaces with hyphens in all local paths (e.g. "Local LLM Helper" -> `Local-LLM-Helper-replica`).
-Use `get_replica_structure(space_id, local_root?)` for the exact local replica layout of an existing space and for initial replica creation in a chosen working copy.
-Use `create_local_replica_page(..., local_root?)` to scaffold new local-only pages in the chosen local working copy.
-Use get_replica_standards and resolve_replica_directory_name only when you need to inspect or verify naming behavior.
-Use the replica tree mapping plus `_meta.json` to relate local replica files back to remote pages.
-
-Ownership split:
-
-- the **server** controls canonical replica structure, metadata paths, sync bookkeeping files, and comparison normalization
-- the **server** also enforces stale-push detection from each page's recorded sync base
-- the **client** controls which local working-copy root is active, page edits, which pages to operate on, and whether to force a winner after reviewing status or diff output
-
-When local replica files are edited, use `get_sync_status(space_id, local_root?)` to discover which files changed and which remote pages they correspond to.
-Use `get_sync_diff(space_id, ..., local_root?)` to return the differing sections and line numbers whenever local and remote diverge.
-Use `pull_replica(..., local_root?)` to materialize or refresh local files from remote Docmost.
-Use `push_replica(..., local_root?)` to update remote Docmost from the selected local working copy.
-`pull_replica` is one-way and does not auto-push local changes first.
-`push_replica` is one-way and does not auto-pull remote changes first.
-Representation-only drift is normalized server-side before comparison so CRLF vs LF, BOM, Unicode normalization form, and final-newline differences do not create false conflicts.
-If local and remote both changed since the last sync base, return the clashes first and force push or force pull only after the consuming model has chosen a winner or asked the user. This lets multiple local working copies cooperate safely: once one working copy pushes, another working copy must pull or consciously force before it can push stale content.
-
-## Docmost MCP - writing
-
-The docmost-mcp MCP server supports write operations. Auth is handled automatically - never call an auth route first.
-All content is markdown in and out.
-
-Before creating a page, use get_space_tree or list_pages to check if a matching page already exists.
-Use create_local_replica_page for normal local-first page creation in the selected working-copy replica, then edit locally and push when ready.
-Use resolve_replica_directory_name and get_replica_standards only when you need to inspect naming behavior directly.
-
-Use create_page to create a new page. Pass parent_page_id to create a nested child page.
-Use push_replica for normal local-replica sync work. Whole-space sync is `push_replica(..., local_root=...)` with no page selectors. Selected-page sync is `push_replica(..., local_root=..., page_ids=[...])`. Single local-only page sync is `push_replica(..., local_root=..., local_paths=[...])`. Use update_page as the low-level fallback when you intentionally want to bypass the higher-level sync workflow. Prefer update_page over delete+create - Docmost preserves page history on update.
-Use delete_page ONLY when the user has clearly confirmed a page should be removed, or when a local edit makes it unambiguous that the page no longer exists (e.g. the local file was deliberately deleted and the user agreed). Never delete speculatively.
-Use delete_space ONLY on explicit user instruction.
-
-All IDs passed to write tools must originate from a live MCP tool response - never from memory, local files, or inference:
-- space_id: from list_spaces or create_space
-- parent_page_id: from list_pages, get_space_tree, or a prior create_page response
-- A create_page id is valid as parent_page_id only within the same uninterrupted sequence - re-resolve via list_pages or get_space_tree if any deletion has occurred since that creation
-- A 404 from any write tool means the given ID does not exist in live Docmost; use a read tool to resolve the correct ID and retry
-
-Content formatting rules (applies to all page content passed to create_page and update_page):
-Do NOT use Unicode typographic characters in page content. These characters are not reliably rendered across all Docmost consumers and may appear as garbled text or question marks.
-Forbidden characters and their plain-text replacements:
-- em dash (-) -> use hyphen with surrounding spaces ( - ) or a plain hyphen (-)
-- en dash (-) -> use a plain hyphen (-)
-- right arrow (->) -> use the two-character sequence ->
-- double arrow (=>) -> use the two-character sequence =>
-- ellipsis (...) -> use three plain dots (...)
-- curly quotes (" " ' ') -> use straight quotes (" and ')
-When inline text separation is needed, use a plain hyphen (-) as the separator.
-When syncing local -> remote:
-1. Choose the working-copy root first. Pass `local_root` when you want the sync to operate on a repo-local replica rather than the service default at `./{space_name}-replica/`.
-2. Call `get_sync_status` to identify which tracked pages are local-only, remote-only, conflicting, or already synced.
-3. Call `get_sync_diff` when you need the exact line-based clash details before choosing a resolution.
-4. Use `create_local_replica_page` when a brand-new local-only page needs to be scaffolded in the replica.
-5. Use `push_replica` for local-ahead changes and local-only pages.
-6. Use `pull_replica` for remote-ahead changes.
-7. Leave `page_ids` and `local_paths` empty to sync the whole space, pass `page_ids` to sync selected tracked pages, or pass `local_paths` to sync a specific local-only page.
-8. If another working copy pushed in between, the stale working copy will surface as `remote_only_change` or `conflicted` and must pull or force after reviewing the diff.
-9. Do not expect `pull_replica` to push first, and do not expect `push_replica` to pull first - blocked attempts should follow the recommended next action from sync status or operation results.
-10. If both local and remote changed, choose whether to `force` push or `force` pull only after inspecting the clash output.
-11. Never delete remote pages based solely on a missing local file without user confirmation.
-
-Sync request and response hints:
-
-- `get_sync_status(space_id, include_synced=false, local_root?)` returns per-page `recommended_action`, `allowed_actions`, and space-level `pipeline_expectations`
-- `get_sync_diff(space_id, page_id?, local_path?, include_synced=false, local_root?)` lets automation narrow diff inspection to one tracked page or one local replica path; when `local_path` belongs to a single replica root, the service can infer that working-copy root automatically
-- `create_local_replica_page(space_id, title, content?, parent_page_id?, parent_local_path?, local_root?)` scaffolds a canonical local-only page directory, `page.md`, and `_meta.json` without making the client hand-write replica metadata
-- `pull_replica` and `push_replica` accept `{"local_root": "...", "page_ids": [...], "local_paths": [...], "force": false}` so automation can target a whole space, a selected set of tracked pages, or a single local-only page inside one working copy
-- blocked `pull_replica` or `push_replica` results return `recommended_next_action` so callers can continue the intended pipeline instead of guessing
-
-## Naming rules (spaces)
-
-Space slugs must be alphanumeric with no spaces or dashes (e.g. "mydocs", not "my-docs").
-Use get_replica_standards to verify naming conventions before creating spaces or pages.
-```
-
-This is the one recommended Docmost-specific instruction file. Do not split the
-same Docmost behavior across multiple competing instruction files unless you
-deliberately want to manage instruction precedence yourself.
-
-### Resulting behavior
-
-With the dedicated Docmost home configured this way:
-
-- Docmost MCP is available only when you start Copilot with `COPILOT_HOME="$HOME/copilot-docmost"`
-- the Docmost-specific instructions live alongside the Docmost MCP config
-- your default global Copilot instructions stay free of Docmost-specific assumptions
-- the consumer is explicitly told to:
-  - use Docmost as the primary **long-term** documentation source (not assumed stale)
-  - use both internal session docs and Docmost - neither replaces the other
-  - check whether a page already exists before creating one
-  - scaffold new local-only pages via `create_local_replica_page`, and use `get_replica_standards` / `resolve_replica_directory_name` only when inspecting naming behavior
-  - use `local_root` to select the active working-copy replica when needed
-  - use `get_sync_status` and `get_sync_diff` to reason about the selected working-copy state
-  - use `push_replica` and `pull_replica` for whole-space, selected-page, or single-page replica sync work
-  - use `create_page` with `parent_page_id` for nested child pages
-  - **only delete** remote pages when the user has confirmed removal - never speculatively
-  - return clashes before forcing a sync winner when local and remote diverge
-
-## Updating the running service
-
-When you change code or dependencies:
-
-```bash
-docker compose up --build -d
-```
-
-To restart without rebuilding:
-
-```bash
-docker compose restart
-```
-
-To stop the service:
-
-```bash
-docker compose down
-```
-
-## Troubleshooting
-
-### Health endpoint fails
-
-Check:
-
-1. the container is running
-2. the published port is correct
-3. the reverse proxy is forwarding correctly if one is used
-
-### MCP cannot connect
-
-Check:
-
-1. the configured MCP URL ends with `/mcp`
-2. the Copilot CLI machine can reach the host and port
-3. HTTPS or proxy settings are correct if the endpoint is remote
-4. the MCP config includes all intended tools (read + write)
-
-### MCP returns "Session not found" after a rebuild or restart
-
-`/mcp` uses streamable HTTP sessions. When the service process restarts, old session ids become invalid.
-
-Check:
-
-1. the service finished restarting cleanly
-2. the MCP client opened a fresh session after the restart instead of reusing the old one
-3. you retried from a new Copilot/MCP session if the previous one was connected before the rebuild
-
-### Page lookup is confusing or keeps failing
-
-Check:
-
-1. you identified the correct `space_id` via `/spaces` or `list_spaces` first
-2. you are using that same `space_id` for `/spaces/{space_id}/tree`, `/spaces/{space_id}/pages`, `get_space_tree`, or `list_pages`
-3. you are not treating page lookup as global across all spaces
-4. the page may genuinely be stale, deleted, or in a different space
-
-### Replica layout or naming is inconsistent
-
-Check:
-
-1. you are using `/spaces/{space_id}/replica-structure` or `get_replica_structure` for existing remote content
-2. you are using `/replica/standards` or `get_replica_standards` for the shared local-replica rules
-3. you are using `/spaces/{space_id}/sync/local-pages` or `create_local_replica_page` for new local-only pages
-4. you are treating the local replica as the working source of truth only after newer local edits actually exist
-5. you are using `get_sync_status` and `get_sync_diff` to inspect drift in the selected working copy before forcing a sync winner
-
-### Database connection fails
-
-Check:
-
-1. the credentials in `.env`
-2. the database host name reachable from inside the Docker network
-3. the external network name in `docker-compose.yml`
-4. whether the live Docmost PostgreSQL container is actually on that network
-
-### Wrong scope in Copilot CLI
-
-If Docmost MCP is appearing in unrelated work:
-
-1. move it into a dedicated `COPILOT_HOME`
-2. remove it from your default `~/.copilot/mcp-config.json`
-3. start Docmost-only sessions with the dedicated Copilot home
-
-## Local non-Docker run
-
-If you want to run the service locally without Docker:
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8099
-```
-
-You still need valid Docmost database connectivity through the configured env vars.
-If your `.env` uses a Docker-only hostname such as `db`, that local run will fail unless
-your machine can resolve that hostname. For non-Docker local runs, set `DOCMOST_DB_HOST`
-or `DOCMOST_DB_URL` to a database address reachable from the host machine.
-
-## Intended lookup and write flow
-
-This service is **space-first**.
-
-1. use `list_spaces` or `GET /spaces` to identify the correct Docmost space
-2. select the matching space by name, then use its `id` as `space_id`
-3. use `get_space_tree(space_id)` or `GET /spaces/{space_id}/tree` for the full nested structure
-4. use `list_pages(space_id)` or `GET /spaces/{space_id}/pages` for a flat list
-5. use `get_page(space_id, page_id)` or `GET /spaces/{space_id}/pages/{page_id}` for a single page with markdown content
-
-Before creating a page:
-- check whether the page already exists via `get_space_tree` or `list_pages`
-- use `create_local_replica_page` when the real intent is to start a new local-only page first
-- use `get_replica_standards` and `resolve_replica_directory_name` only when you need to inspect naming behavior directly
-- use `create_page` with `parent_page_id` to create nested child pages at any depth
-
-All IDs passed to write operations must originate from a live MCP tool response - never from memory, local files, or inference:
-- `space_id` must come from `list_spaces` or `create_space`
-- `parent_page_id` must come from `list_pages`, `get_space_tree`, or a prior `create_page` response
-- A `create_page` response id is valid as `parent_page_id` only within the same uninterrupted sequence - if any deletion or space removal has occurred since that creation, re-resolve with `list_pages` or `get_space_tree` first
-- A **404** from any write tool means the given ID does not exist in the live Docmost instance; resolve the correct ID via a read tool and retry
-
-When updating existing pages:
-- prefer `update_page` over delete+create - Docmost preserves full page history on update
-- use `operation=replace` (default) to overwrite, `append` to add after, `prepend` to add before
-
-Important clarifications:
-
-- page lookup is not global; pages are always scoped to a space
-- the tools and routes accept `space_id`, not a space name string
-- if you only know a space name, resolve it through `list_spaces` first
-- the tree is built dynamically from `pages.parent_page_id`
-- `parent_page_id = null` means the page is a top-level page in the space
-- `orphan_pages` contains pages whose parent is missing or unreachable
-
-## Recommended documentation-source workflow
-
-The intended usage is **not** merely "Docmost-related tasks."
-
-The intended usage is:
-
-- Docmost MCP is the primary **long-term** documentation source for the active project - remote pages are not presumed stale or deprecated
-- established project direction, user decisions, and documented behavior should be read from Docmost when not fully present in the prompt
-- internal session documentation and Docmost documentation are complementary - use both
-- if the user refers to docs, documentation, a documented page, or a file/path that may be documented externally, check Docmost before guessing
-- maintain a local-first replica in the working copy being edited; if no `local_root` is passed, use the default location at `./{space_name}-replica/`
-
-Recommended local-replica behavior:
-
-1. choose the active working-copy replica root; if omitted, the default is `./{space_name}-replica/`
-2. use `get_replica_structure(space_id, local_root?)` as the source for the initial replica layout
-3. use `create_local_replica_page(..., local_root?, existing_dir_names=...)` to get the canonical local page scaffold; the client writes the returned `page.md` and `_meta.json` locally
-4. keep local file IO and any locally stored sync-base hash on the client side
-5. use `get_sync_status(..., pages=[...], local_root?)` to discover which local pages are unsynced and how each one maps to remote Docmost
-6. use `get_sync_diff(..., pages=[...], local_root?)` to inspect all differing sections and line ranges whenever local and remote diverge
-7. use `pull_replica(..., pages=[...], local_root?)` to get canonical remote snapshots the client should write locally
-8. use `push_replica(..., pages=[...], local_root?)` to send local-ahead or local-only pages to remote Docmost
-9. leave selectors empty for whole-space sync, pass `page_ids` for selected tracked pages, or pass `local_paths` for a single local-only page
-10. if another working copy has pushed in between, the stale working copy must pull or deliberately force after reviewing the diff
-11. never delete remote pages based solely on a missing local file without user confirmation
-
-## Replica structure and naming standard
-
-Use the replica surfaces when you want the client to stop guessing local layout.
-
-- use `get_replica_standards()` or `GET /replica/standards` for the shared policy
-- use `get_replica_structure(space_id, local_root?)` or `GET /spaces/{space_id}/replica-structure?local_root=...` for the full local layout of an existing remote space
-- use `create_local_replica_page(...)` or `POST /spaces/{space_id}/sync/local-pages` when creating a new local-only page in the selected local working copy
-- use `resolve_replica_directory_name(...)` or `GET /replica/resolve-directory-name` only when you need to inspect naming behavior directly
-
-Replica root:
-
-- root path: `./{space_name}-replica/`
-- spaces in the space name are replaced with hyphens (e.g. "Local LLM Helper" -> `./Local-LLM-Helper-replica/`)
-- no spaces are allowed in any local directory or file name
-
-Per-page replica mapping:
-
-- every Docmost page maps to a **directory**
-- the page's own content lives in `page.md`
-- the page's metadata lives in `_meta.json`
-- child pages become nested subdirectories under the parent page directory
-- the replica tree output already maps each remote page to:
-  - page `id`
-  - page `title`
-  - `content_file_path`
-  - `meta_file_path`
-- use that mapping plus each page directory's `_meta.json` to tell the user which local file corresponds to which remote page
-
-Replica root support files:
-
-- `_replica.json` stores canonical replica metadata
-- `_tree.json` stores the canonical resolved tree snapshot used for the replica
-- any additional local sync-base bookkeeping belongs to the client-side working copy, not to the server
-
-Directory naming rule:
-
-1. use the filesystem-safe page title as the base directory name - spaces are replaced with hyphens
-2. if sibling pages collide at the same level, use `{title}__{slug_id}`
-3. if `slug_id` is missing or still collides, use `{title}__{short_page_id}`
-4. no spaces are allowed in any local directory or file name at any level
-
-Sync and truth rule:
-
-- remote Docmost is the long-term authoritative documentation source - not assumed stale
-- the editable working copy is whichever replica root the client selected for the operation
-- the client owns local file IO and any locally stored sync-base metadata
-- `get_sync_status` and `get_sync_diff` operate on client-reported local page state, not on server-side filesystem scans
-- when those local pages correspond to remote pages, sync status must identify the remote page title and page id
-- when local and remote diverge, `get_sync_diff` must return all differing sections and line ranges
-- when one working copy pushes before another, the stale working copy must be blocked until it pulls or intentionally forces after reviewing the diff
-- to sync: use `push_replica` and `pull_replica` as the primary workflow, and use `force` only after a deliberate resolution choice
-
-The MCP server also publishes built-in instructions (from `app/mcp_server.py` `SERVER_INSTRUCTIONS`):
-
-```text
-This server exposes Docmost spaces and pages for both reading and writing.
-
-This MCP surface is the client-facing half of a server-side bridge.
-The server owns Docmost integration, bridge state, normalization, and remote
-writes. The client or helper owns local replica file IO, working-copy
-selection, page edits, and any locally stored sync-base metadata.
-Do not assume the server can see or scan the client working copy.
-
-## Reading
-Use list_spaces to find the correct space. Use get_space_tree for page hierarchy.
-Use list_pages for a flat page list. Use get_page for a single page with markdown content.
-If the user gives a space name rather than a UUID, resolve it with list_spaces first.
-Pages are always space-scoped - always pass space_id together with page_id.
-
-## Writing
-All write tools authenticate automatically - never call an auth tool first.
-Use push_replica and pull_replica as the normal local-first workflow when the
-user is working from a client-owned replica.
-Use create_space to create a new space (slug must be alphanumeric, no dashes).
-Use create_page to create a page. Pass parent_page_id to create nested child pages.
-Use update_page to update an existing page's title and/or content.
-  Prefer update_page over delete+create - Docmost preserves page history on update.
-  Use operation='replace' (default) to overwrite, 'append' or 'prepend' to add content.
-Use delete_page to soft-delete a page (it moves to Docmost trash).
-Use delete_space to permanently delete a space and all its contents.
-All content is markdown in and out. Never pass ProseMirror JSON to write tools.
-
-Content formatting rules (applies to all page content passed to create_page and update_page):
-Do NOT use Unicode typographic characters in page content. These characters are not reliably
-rendered across all Docmost consumers and may appear as garbled text or question marks.
-Forbidden characters and their plain-text replacements:
-  em dash (-)    -> use hyphen with surrounding spaces ( - ) or a plain hyphen (-)
-  en dash (-)    -> use a plain hyphen (-)
-  right arrow (->) -> use the two-character sequence ->
-  double arrow (=>) -> use the two-character sequence =>
-  ellipsis (...)  -> use three plain dots (...)
-  curly quotes (" " ' ') -> use straight quotes (" and ')
-When inline text separation is needed, use a plain hyphen (-) as the separator.
-
-All IDs passed to write tools (space_id, page_id, parent_page_id) must originate from a
-prior MCP tool response in the current session - never from memory, local files, or inference.
-  - space_id: must come from list_spaces or create_space.
-  - parent_page_id: must come from list_pages, get_space_tree, or a create_page response.
-A 404 from any write tool means the given ID does not exist in the live Docmost instance.
-Resolve by calling the appropriate read tool (list_spaces, list_pages) to obtain a valid ID.
-
-## Replica management
-Maintain or create a local-first replica in the working copy being edited. If local_root is omitted, use the default location at `./{space_name}-replica/`.
-All local replica directory and file names must not contain spaces - replace with hyphens.
-Use get_replica_structure(space_id, local_root?) for the initial local replica layout.
-Use create_local_replica_page(..., local_root?, existing_dir_names=...) to plan local-only additions.
-Use get_replica_standards and resolve_replica_directory_name only when you need to inspect naming behavior directly.
-The client owns local replica file IO, working-copy selection, and locally stored sync-base metadata.
-The server owns canonical replica planning, normalization, version checks, and safe Docmost writes.
-Call get_sync_status(space_id, pages=[...], ...) first to classify the current state before choosing a sync action.
-Use get_sync_status to identify changed client-local pages, map them to remote pages, and report whether they are local-only, remote-only, or conflicting.
-Use get_sync_diff(space_id, pages=[...], ...) to return differing sections and line numbers for every clash.
-Use get_sync_diff before any force pull or force push decision.
-Use pull_replica(..., pages=[...], local_root?) and push_replica(..., pages=[...], local_root?) as the primary sync workflow. Leave selectors empty for whole-space sync, pass page_ids for selected tracked pages, or pass local_paths for a single local-only page. Only force a winner after a deliberate resolution choice.
-If one working copy pushes before another, the stale working copy must pull or intentionally force after reviewing the diff.
-When a sync result returns recommended_next_action, follow that next step instead of retrying the same blocked operation.
-If content looks stale, deprecated, or inconsistent with verified behavior, say so explicitly.
-If requested data is missing, report that explicitly instead of guessing.
-```
-
-## Architecture
-
-Typical deployment:
-
-1. the live Docmost stack already exists on a server
-2. this service runs as a separate container on that same server
-3. this service joins the same Docker network as Docmost so it can reach the Docmost PostgreSQL container
-4. Copilot CLI runs on a different machine and connects remotely to `https://<YOUR_DOCMOST_MCP_HOST>/mcp`
-
-## Files in this project
-
-Important files:
-
-| File | Purpose |
-|---|---|
-| `Dockerfile` | builds the Docmost MCP image |
-| `docker-compose.yml` | runs the Docmost MCP container |
-| `env.example` | example runtime configuration |
-| `requirements.txt` | Python dependencies |
-| `app/main.py` | FastAPI application entrypoint |
-| `app/mcp_server.py` | MCP server and all MCP tool definitions |
-| `app/models.py` | shared Pydantic models for request/response |
-| `app/docmost_auth/auth.py` | Docmost login; stores JWT in memory; never persisted |
-| `app/query/docmost.py` | DB + REST read operations (spaces, pages, tree, replica) |
-| `app/query/routers/` | REST GET routes for read operations |
-| `app/write/docmost.py` | httpx REST client for all write operations |
-| `app/write/routers/spaces.py` | POST/DELETE `/spaces` REST routes |
-| `app/write/routers/pages.py` | POST/PUT/DELETE `/spaces/{id}/pages` REST routes |
-| `docs/docmost-write-api.md` | Docmost write API notes (auth, POST-only, response wrapper) |
-
-## Data model
-
-**Spaces** - `public.spaces`
-
-Columns exposed: `id`, `name`, `description`, `slug`, `visibility`, `default_role`,
-`creator_id`, `workspace_id`, `created_at`, `updated_at`.
-
-**Pages** - `public.pages`
-
-Columns exposed: `id`, `slug_id`, `title`, `icon`, `position`, `parent_page_id`,
-`creator_id`, `last_updated_by_id`, `space_id`, `workspace_id`, `is_locked`,
-`content`, `created_at`, `updated_at`.
-
-Deleted Docmost rows are excluded by checking `deleted_at IS NULL`.
-
----
-
-## Client-side setup: Claude Code
-
-The recommended client for this server is the **docmost-helper** stdio MCP, which handles local replica file IO, sync workflows, and stash operations. The consuming model calls the helper for all Docmost operations.
-
-### 1. Set up the helper venv
+The helper runs on the machine where Claude Code runs. It does not host the bridge; it connects
+to the already-running server and manages the local replica.
 
 ```bash
 cd helper
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.example .env
-# Set DOCMOST_MCP_SERVER_URL in helper/.env
+# Set DOCMOST_MCP_SERVER_URL in helper/.env to the running server base URL.
+# Optionally set DOCMOST_REPLICA_BASE to the directory that holds your replica(s).
 ```
 
-### 2. Register in `.mcp.json`
+Register `docmost-helper` as a **stdio** MCP in exactly one Claude Code scope:
 
-The repo root already contains `.mcp.json`. Add the helper stdio entry:
+- **User / home scope** (`$CLAUDE_CONFIG_DIR/.claude.json`, falling back to `~/.claude.json`):
+  loads in every session. This is how the live environment is set up.
+- **Project scope** (`.mcp.json` at a repo root): loads only in that directory.
 
 ```json
 {
   "mcpServers": {
     "docmost-helper": {
       "type": "stdio",
-      "command": "/absolute/path/to/docmost-mcp-server/helper/.venv/bin/python3",
+      "command": "/absolute/path/to/docmost-mcp-server/helper/.venv/bin/python",
       "args": ["/absolute/path/to/docmost-mcp-server/helper/server.py"]
     }
   }
 }
 ```
 
-The helper is additive — it loads alongside the `discord-mcp` entry already in `.mcp.json` and any MCPs registered in your Claude home config.
+Keep the scopes disjoint (do not register the same MCP in both home and project). **Do not
+register the operator `/mcp` HTTP MCP for the model** - the model uses `docmost-helper` only. The
+included `claude.json.example` shows the correct helper-stdio registration. See `helper/README.md`
+for the full helper reference.
 
-### 3. Normal operation
+## Data model
 
-Once the helper is registered, the model uses `docmost-helper` tools for all operations:
+### Docmost (read directly; never altered by the bridge)
 
-- **Reads**: `list_spaces`, `get_space`, `get_space_tree`, `list_pages`, `get_page`
-- **Writes**: `create_page`, `update_page`, `delete_page`, `create_space`, `delete_space`
-- **Sync**: `sync_space`, `push_pages`, `pull_pages`, `accept_remote`
-- **Conflict resolution**: `stash_page` → `accept_remote` → `get_stash` → merge → `push_pages` → `clear_stash`
+- `spaces`: `id, name, description, slug, visibility, default_role, creator_id, workspace_id, created_at, updated_at`
+- `pages`: `id, slug_id, title, icon, position, parent_page_id, creator_id, last_updated_by_id, space_id, workspace_id, is_locked, content, created_at, updated_at` (rows with `deleted_at IS NULL`)
 
-The server-side `docmost-mcp` HTTP MCP remains available for direct inspection and manual override.
+### Bridge (owned by this service; `migrations/bridge/*.sql`)
 
----
+| Table | Purpose |
+|---|---|
+| `page_versions` | append-only version history (`revision_hash`, title, content, structural fields, `source`) |
+| `page_heads` | current head per page (`current_revision_hash`, content, parent, position, icon, `is_deleted`) |
+| `write_intents` | every attempted bridge write (action, caller_mode, status, target hash) |
+| `write_receipts` | pending write confirmations matched by the observer |
+| `observer_checkpoints` | last seen Docmost `updated_at` + observed hash per page |
+| `local_page_snapshots` | helper stash snapshots for conflict resolution |
 
-## Known issues
+## Updating the running service
 
-**Page title duplication (fixed)** — `create_page` and `update_page` both pass `title` as
-a dedicated field; Docmost renders it as the page header above the body. `SERVER_INSTRUCTIONS`
-and tool descriptions now explicitly prohibit including the title as a `# Heading` in the
-content body, which previously caused it to render twice. Pages created before this
-instruction fix still carry a duplicate `# Heading` in their stored content — `update_page`
-will not strip it automatically; content must be explicitly rewritten to remove it.
+```bash
+docker compose up -d --build     # rebuild after code/dependency changes
+docker compose restart           # restart without rebuilding
+docker compose logs -f docmost-mcp docmost-mcp-worker
+```
+
+## Troubleshooting
+
+- **Health OK but reads fail** - `/health` is process-only. Check `.env` DB credentials, the
+  Docmost DB hostname on the shared network, and `DOCMOST_NETWORK_NAME`.
+- **`/mcp` "Session not found" after a restart** - streamable-HTTP sessions reset on restart;
+  open a fresh session.
+- **Page lookups fail** - resolve `space_id` first; page lookup is always space-scoped.
+- **Helper can't find a replica** - it scans `DOCMOST_REPLICA_BASE` (default: the helper's cwd)
+  for a `_replica.json` whose `space_id` matches. Pass an explicit `local_root` to override.
+- **Worker not recording manual edits** - check `docmost-mcp-worker` logs; it observes every
+  space on `WORKER_INTERVAL_SECONDS`.
+
+## Local non-Docker run
+
+```bash
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8099
+# worker, separately:
+python -m app.observer.worker --loop
+```
+
+You still need valid Docmost and bridge database connectivity through the env vars; a
+Docker-only hostname such as `db` will not resolve from a bare host run.
 
 ## License
 

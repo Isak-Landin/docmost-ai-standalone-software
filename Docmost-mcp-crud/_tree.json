@@ -1,128 +1,109 @@
 {
-  "space": {
-    "id": "019bb995-f39f-7ea4-abbc-faabef896396",
-    "name": "Local LLM Helper",
-    "slug": "LLH"
-  },
-  "root_pages": [
+  "pages": [
     {
-      "title": "Overview",
-      "local_dir_name": "Overview",
-      "local_dir_path": "./Local-LLM-Helper-replica/Overview",
-      "content_file_path": "./Local-LLM-Helper-replica/Overview/page.md",
-      "meta_file_path": "./Local-LLM-Helper-replica/Overview/_meta.json",
-      "source": "local-only",
-      "children": []
+      "page_id": "019d682d-2dc9-726f-92e8-81f87afc5743",
+      "parent_page_id": null,
+      "position": "a7BTr",
+      "icon": null,
+      "local_path": "Docmost-mcp-crud/Release/page.md"
     },
     {
-      "title": "Architecture",
-      "local_dir_name": "Architecture",
-      "local_dir_path": "./Local-LLM-Helper-replica/Architecture",
-      "content_file_path": "./Local-LLM-Helper-replica/Architecture/page.md",
-      "meta_file_path": "./Local-LLM-Helper-replica/Architecture/_meta.json",
-      "source": "local-only",
-      "children": []
+      "page_id": "019d682d-2afd-7cfe-887c-01d136369a3e",
+      "parent_page_id": null,
+      "position": "a37Xy",
+      "icon": null,
+      "local_path": "Docmost-mcp-crud/Overview/page.md"
     },
     {
-      "title": "Configuration",
-      "local_dir_name": "Configuration",
-      "local_dir_path": "./Local-LLM-Helper-replica/Configuration",
-      "content_file_path": "./Local-LLM-Helper-replica/Configuration/page.md",
-      "meta_file_path": "./Local-LLM-Helper-replica/Configuration/_meta.json",
-      "source": "local-only",
-      "children": []
+      "page_id": "019d682d-2ca8-7933-9210-92535dc1c1be",
+      "parent_page_id": null,
+      "position": "a50C6",
+      "icon": null,
+      "local_path": "Docmost-mcp-crud/REST-API/page.md"
     },
     {
-      "title": "REST-API",
-      "local_dir_name": "REST-API",
-      "local_dir_path": "./Local-LLM-Helper-replica/REST API",
-      "content_file_path": "./Local-LLM-Helper-replica/REST-API/page.md",
-      "meta_file_path": "./Local-LLM-Helper-replica/REST-API/_meta.json",
-      "source": "local-only",
-      "children": [
-        {
-          "title": "Health",
-          "local_dir_name": "Health",
-          "local_dir_path": "./Local-LLM-Helper-replica/REST-API/Health",
-          "content_file_path": "./Local-LLM-Helper-replica/REST-API/Health/page.md",
-          "meta_file_path": "./Local-LLM-Helper-replica/REST-API/Health/_meta.json",
-          "source": "local-only",
-          "children": []
-        },
-        {
-          "title": "Spaces",
-          "local_dir_name": "Spaces",
-          "local_dir_path": "./Local-LLM-Helper-replica/REST-API/Spaces",
-          "content_file_path": "./Local-LLM-Helper-replica/REST-API/Spaces/page.md",
-          "meta_file_path": "./Local-LLM-Helper-replica/REST-API/Spaces/_meta.json",
-          "source": "local-only",
-          "children": []
-        },
-        {
-          "title": "Pages",
-          "local_dir_name": "Pages",
-          "local_dir_path": "./Local-LLM-Helper-replica/REST-API/Pages",
-          "content_file_path": "./Local-LLM-Helper-replica/REST-API/Pages/page.md",
-          "meta_file_path": "./Local-LLM-Helper-replica/REST-API/Pages/_meta.json",
-          "source": "local-only",
-          "children": []
-        },
-        {
-          "title": "Replica",
-          "local_dir_name": "Replica",
-          "local_dir_path": "./Local-LLM-Helper-replica/REST-API/Replica",
-          "content_file_path": "./Local-LLM-Helper-replica/REST-API/Replica/page.md",
-          "meta_file_path": "./Local-LLM-Helper-replica/REST-API/Replica/_meta.json",
-          "source": "local-only",
-          "children": []
-        }
-      ]
+      "page_id": "019d682d-2e5b-722d-953f-9c0cd74408a2",
+      "parent_page_id": null,
+      "position": "a86rV",
+      "icon": null,
+      "local_path": "Docmost-mcp-crud/Architecture/page.md"
     },
     {
-      "title": "MCP-Server",
-      "local_dir_name": "MCP-Server",
-      "local_dir_path": "./Local-LLM-Helper-replica/MCP Server",
-      "content_file_path": "./Local-LLM-Helper-replica/MCP-Server/page.md",
-      "meta_file_path": "./Local-LLM-Helper-replica/MCP-Server/_meta.json",
-      "source": "local-only",
-      "children": []
+      "page_id": "019d682d-29d0-727b-af61-82b72651f0d3",
+      "parent_page_id": null,
+      "position": "a19Za",
+      "icon": null,
+      "local_path": "Docmost-mcp-crud/Configuration/page.md"
     },
     {
-      "title": "Replica-System",
-      "local_dir_name": "Replica-System",
-      "local_dir_path": "./Local-LLM-Helper-replica/Replica System",
-      "content_file_path": "./Local-LLM-Helper-replica/Replica-System/page.md",
-      "meta_file_path": "./Local-LLM-Helper-replica/Replica-System/_meta.json",
-      "source": "local-only",
-      "children": []
+      "page_id": "019d682d-2d5d-791f-991c-1ddcfae619f5",
+      "parent_page_id": null,
+      "position": "a67hV",
+      "icon": null,
+      "local_path": "Docmost-mcp-crud/MCP-Server/page.md"
     },
     {
-      "title": "Data-Models",
-      "local_dir_name": "Data-Models",
-      "local_dir_path": "./Local-LLM-Helper-replica/Data Models",
-      "content_file_path": "./Local-LLM-Helper-replica/Data-Models/page.md",
-      "meta_file_path": "./Local-LLM-Helper-replica/Data-Models/_meta.json",
-      "source": "local-only",
-      "children": []
+      "page_id": "019d682d-2bfa-79c7-9486-5e1ca8b1bf02",
+      "parent_page_id": null,
+      "position": "a4A7k",
+      "icon": null,
+      "local_path": "Docmost-mcp-crud/Deployment/page.md"
     },
     {
-      "title": "Database-Layer",
-      "local_dir_name": "Database-Layer",
-      "local_dir_path": "./Local-LLM-Helper-replica/Database Layer",
-      "content_file_path": "./Local-LLM-Helper-replica/Database-Layer/page.md",
-      "meta_file_path": "./Local-LLM-Helper-replica/Database-Layer/_meta.json",
-      "source": "local-only",
-      "children": []
+      "page_id": "019e8cbb-f1c3-754c-ad23-1276e6c7832c",
+      "parent_page_id": null,
+      "position": "aA3KO",
+      "icon": null,
+      "local_path": "Docmost-mcp-crud/claude-mcp-setup/page.md"
     },
     {
-      "title": "Deployment",
-      "local_dir_name": "Deployment",
-      "local_dir_path": "./Local-LLM-Helper-replica/Deployment",
-      "content_file_path": "./Local-LLM-Helper-replica/Deployment/page.md",
-      "meta_file_path": "./Local-LLM-Helper-replica/Deployment/_meta.json",
-      "source": "local-only",
-      "children": []
+      "page_id": "019d682d-2899-7c19-b4c6-033e9034a4f3",
+      "parent_page_id": null,
+      "position": "a02jp",
+      "icon": null,
+      "local_path": "Docmost-mcp-crud/Data-Models/page.md"
+    },
+    {
+      "page_id": "019d682d-9cfc-71df-a42e-588e2132d165",
+      "parent_page_id": null,
+      "position": "a95iM",
+      "icon": null,
+      "local_path": "Docmost-mcp-crud/Replica-System/page.md"
+    },
+    {
+      "page_id": "019d682d-2a69-76e1-a3ee-1730bca7c387",
+      "parent_page_id": null,
+      "position": "a2AQv",
+      "icon": null,
+      "local_path": "Docmost-mcp-crud/Database-Layer/page.md"
+    },
+    {
+      "page_id": "019d682e-3067-71b2-a50a-eb81d5a314c2",
+      "parent_page_id": "019d682d-2ca8-7933-9210-92535dc1c1be",
+      "position": "a19c5",
+      "icon": null,
+      "local_path": "Docmost-mcp-crud/REST-API/Health/page.md"
+    },
+    {
+      "page_id": "019d682e-3137-7208-9be7-7b7fdbb05b32",
+      "parent_page_id": "019d682d-2ca8-7933-9210-92535dc1c1be",
+      "position": "a27A4",
+      "icon": null,
+      "local_path": "Docmost-mcp-crud/REST-API/Spaces/page.md"
+    },
+    {
+      "page_id": "019d682e-2fca-7446-a16f-aee2c1681d4c",
+      "parent_page_id": "019d682d-2ca8-7933-9210-92535dc1c1be",
+      "position": "a028D",
+      "icon": null,
+      "local_path": "Docmost-mcp-crud/REST-API/Pages/page.md"
+    },
+    {
+      "page_id": "019d682e-321a-785a-aa87-7222452f19e3",
+      "parent_page_id": "019d682d-2ca8-7933-9210-92535dc1c1be",
+      "position": "a38y1",
+      "icon": null,
+      "local_path": "Docmost-mcp-crud/REST-API/Replica/page.md"
     }
-  ],
-  "orphan_pages": []
+  ]
 }

@@ -1,12 +1,12 @@
 {
   "id": "019d682d-2d5d-791f-991c-1ddcfae619f5",
-  "title": "MCP-Server",
+  "title": "MCP Server",
   "slug_id": "0LqigPzzGI",
   "parent_page_id": null,
-  "local_dir_name": "MCP-Server",
-  "local_dir_path": "./Docmost-mcp-crud/MCP-Server",
-  "content_file_path": "./Docmost-mcp-crud/MCP-Server/page.md",
-  "meta_file_path": "./Docmost-mcp-crud/MCP-Server/_meta.json",
-  "source": "remote-synced",
-  "space_id": "019d682b-1af2-7333-aab6-2ebcbeb55cff"
+  "parent_local_dir_path": null,
+  "space_id": "019d682b-1af2-7333-aab6-2ebcbeb55cff",
+  "position": "a67hV",
+  "base_revision_hash": "89068a4d132debd96c7f7cfffc59042c8cb9b0bb0217cd94de4834e262420d13",
+  "content_file_path": "Docmost-mcp-crud/MCP-Server/page.md",
+  "meta_file_path": "Docmost-mcp-crud/MCP-Server/_meta.json"
 }

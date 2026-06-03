@@ -1,88 +1,59 @@
-# Configuration
+All configuration is supplied via environment variables. The server reads `.env`; the helper reads `helper/.env`. Copy the matching `*.example` file and fill in real values. There is no hardcoding in application code.
 
-All configuration is supplied via environment variables. Copy `env.example` to `.env` and fill in
-real values. There is no hardcoding in the application code.
+## Server: Docmost database (read path)
 
-## Docmost read database
-
-Connection to the live Docmost PostgreSQL database (read-only). Two modes are supported;
-`DOCMOST_DB_URL` takes priority when set.
-
-### Option A - Full DSN
+`DOCMOST_DB_URL` takes priority when set; otherwise the individual values are used.
 
 | Variable | Default | Description |
-|---|---|---|
-| `DOCMOST_DB_URL` | _(empty)_ | Full PostgreSQL DSN, e.g. `postgresql://docmost:PASSWORD@db:5432/docmost`. Takes priority over individual components when set. |
-
-### Option B - Individual components (used when `DOCMOST_DB_URL` is not set)
-
-| Variable | Default | Description |
-|---|---|---|
-| `DOCMOST_DB_HOST` | `db` | Hostname of the Docmost PostgreSQL container on the shared Docker network |
-| `DOCMOST_DB_PORT` | `5432` | PostgreSQL port |
+| --- | --- | --- |
+| `DOCMOST_DB_URL` | (empty) | Full Docmost PostgreSQL DSN |
+| `DOCMOST_DB_HOST` | `db` | Docmost DB host on the shared network |
+| `DOCMOST_DB_PORT` | `5432` | Port |
 | `DOCMOST_DB_NAME` | `docmost` | Database name |
-| `DOCMOST_DB_USER` | `docmost` | Database user |
-| `DOCMOST_DB_PASSWORD` | _(empty)_ | Database password |
+| `DOCMOST_DB_USER` | `docmost` | User |
+| `DOCMOST_DB_PASSWORD` | (empty) | Password |
 
-## Bridge state database
+## Server: bridge database (version state)
 
-The service's own PostgreSQL database for bridge version and sync state, separate from Docmost's
-database. `BRIDGE_DB_URL` takes priority when set.
-
-| Variable | Default | Description |
-|---|---|---|
-| `BRIDGE_DB_URL` | _(empty)_ | Full PostgreSQL DSN for the bridge database. Takes priority over individual components. |
-| `BRIDGE_DB_HOST` | _(empty)_ | Bridge database hostname (e.g. the `bridge-db` service) |
-| `BRIDGE_DB_PORT` | `5432` | Bridge database port |
-| `BRIDGE_DB_NAME` | _(empty)_ | Bridge database name |
-| `BRIDGE_DB_USER` | _(empty)_ | Bridge database user |
-| `BRIDGE_DB_PASSWORD` | _(empty)_ | Bridge database password |
-
-## Docmost application (writes)
-
-Used to authenticate and perform write operations through the Docmost REST API.
+`BRIDGE_DB_URL` takes priority when set; otherwise the individual values are used.
 
 | Variable | Default | Description |
-|---|---|---|
-| `DOCMOST_APP_URL` | _(empty)_ | Base URL of the running Docmost web application, as reachable from inside the container (e.g. `http://<DOCMOST_CONTAINER_NAME>:3000`) |
-| `DOCMOST_USER_EMAIL` | _(empty)_ | Email of the Docmost user account used for writes |
-| `DOCMOST_USER_PASSWORD` | _(empty)_ | Password of that Docmost user. The login token is kept in memory only. |
+| --- | --- | --- |
+| `BRIDGE_DB_URL` | (empty) | Full bridge PostgreSQL DSN |
+| `BRIDGE_DB_HOST` | `bridge-db` | Bridge DB host (the bridge-db service) |
+| `BRIDGE_DB_PORT` | `5432` | Port |
+| `BRIDGE_DB_NAME` | `docmost_bridge` | Database name |
+| `BRIDGE_DB_USER` | `docmost_bridge` | User |
+| `BRIDGE_DB_PASSWORD` | (empty) | Password |
 
-## Docker network
+## Server: Docmost application (write path)
 
-| Variable | Default | Description |
-|---|---|---|
-| `DOCMOST_NETWORK_NAME` | `docmost_default` | Name of the external Docker network shared with the Docmost stack |
+| Variable | Description |
+| --- | --- |
+| `DOCMOST_APP_URL` | Base URL of the running Docmost web app (for example `http://docmost:3000`) |
+| `DOCMOST_USER_EMAIL` | Docmost user for write auth; token held in memory only |
+| `DOCMOST_USER_PASSWORD` | Docmost user password |
 
-## Server bind
-
-| Variable | Default | Description |
-|---|---|---|
-| `LISTEN_HOST` | `0.0.0.0` | Address to bind the uvicorn server to |
-| `LISTEN_PORT` | `8099` | Internal port the uvicorn server listens on |
-| `EXTERNAL_PORT` | `8099` | External port published by Docker Compose |
-
-## MCP transport security
+## Server: network, bind, transport, logging, worker
 
 | Variable | Default | Description |
-|---|---|---|
-| `MCP_ALLOWED_HOSTS` | _(empty)_ | Comma-separated list of Host header values the MCP transport will accept. Required when the service is behind a reverse proxy with a custom domain. If empty, DNS-rebinding protection is disabled (not recommended for production). Example: `mcp-docmost.isaklandin.com` |
-
-## Logging
-
-| Variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
+| `DOCMOST_NETWORK_NAME` | `docmost_default` | External Docker network shared with Docmost |
+| `LISTEN_HOST` | `0.0.0.0` | Bind host inside the container |
+| `LISTEN_PORT` | `8099` | Internal port |
+| `EXTERNAL_PORT` | `8099` | Published port |
+| `MCP_ALLOWED_HOSTS` | (empty) | Host headers the `/mcp` transport accepts; empty disables DNS-rebinding protection |
+| `WORKER_INTERVAL_SECONDS` | `15` | Seconds between observer worker passes |
 | `MODE` | `dev` | `dev` or `prod` |
-| `LOG_LEVEL` | `INFO` | `ALL`, `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL` |
+| `LOG_LEVEL` | `INFO` | `ALL`, `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
 
-## DSN construction logic
+## Helper: `helper/.env`
 
-Both databases follow the same rule (`app/query/db.py` for Docmost, `app/bridge/db/connection.py`
-for the bridge):
+| Variable | Required | Description |
+| --- | --- | --- |
+| `DOCMOST_MCP_SERVER_URL` | Yes | Base URL of the running server (the helper calls `/v1`, `/helper/v1`, `/auto-mcp`) |
+| `DOCMOST_REPLICA_BASE` | No | Directory under which the helper discovers replicas by `_replica.json` space id. Defaults to the helper's current working directory. |
 
-```
-if <DB>_URL is set and non-empty:
-    use <DB>_URL as DSN
-else:
-    build DSN from <DB>_HOST, <DB>_PORT, <DB>_NAME, <DB>_USER, <DB>_PASSWORD
-```
+## DSN selection
+
+For each database, if the `*_DB_URL` is set and non-empty it is used as the DSN; otherwise the DSN is built from the individual host / port / name / user / password values.

@@ -1,9 +1,9 @@
 {
   "mcpServers": {
-    "docmost-mcp": {
-      "type": "http",
-      "url": "https://mcp-docmost.isaklandin.com/mcp",
-      "alwaysLoad": true
+    "docmost-helper": {
+      "type": "stdio",
+      "command": "/absolute/path/to/docmost-mcp-server/helper/.venv/bin/python",
+      "args": ["/absolute/path/to/docmost-mcp-server/helper/server.py"]
     }
   }
 }

@@ -1,91 +1,48 @@
-# Replica System
+The replica is a local directory tree the helper maintains as the working copy of a Docmost space. Docmost remains the long-term source of truth; the replica is how the model edits and syncs.
 
-The replica system defines the deterministic local replica file layout for any Docmost space.
-`app/query/replica.py` owns the naming and layout contract. `app/sync/service.py` compares
-client-reported local page state against live Docmost pages, plans paths and diffs statelessly, and
-applies remote writes through the bridge write pipeline.
+## Ownership
 
-## Purpose
+- The helper owns local replica file IO (`helper/helper/replica.py`).
+- The model owns `page.md` content and the directory layout (move a page directory to re-parent).
+- The server owns canonical path planning, comparison normalization, diffing, and safe Docmost writes.
 
-The recommended usage pattern is local-first: maintain a replica in the working copy being edited.
-The service can still use a default root at `./{space_name}-replica`, but callers may pass a
-different `local_root` for a repo-local working copy. The replica system standardizes the tree
-shape so all clients agree on paths, while the sync engine compares client-reported local page
-state against live Docmost pages and performs safe remote writes through the Docmost write API.
-
-## Replica root
-
-```
-./{space_name}-replica/
-```
-
-Example: space "tool-ai-gateway" → `./tool-ai-gateway-replica/`
-
-The space name is sanitized before use:
-- Invalid path characters (`< > : " / \ | ? * \x00-\x1f`) → replaced with `-`
-- Whitespace runs → replaced with `-`
-- Multi-dash runs → collapsed to single `-`
-- Trailing dots or spaces → stripped
-- Windows reserved names (`CON`, `NUL`, etc.) → prefixed with `_`
-
-## Replica root files
-
-| File | Description |
-|---|---|
-| `_replica.json` | Canonical replica-level metadata |
-| `_tree.json` | Resolved tree snapshot used for the replica |
+The model never edits `_meta.json`; the helper writes it after every successful sync.
 
 ## Per-page layout
 
-Every page maps to a **directory** inside the replica tree:
+Every page is a directory containing:
 
-| File | Description |
-|---|---|
-| `page.md` | Normalized plain-text content of the page |
-| `_meta.json` | Page metadata: id, title, slug_id, parent_page_id, local paths |
+| File | Owner | Holds |
+| --- | --- | --- |
+| `page.md` | helper + model | markdown content (no H1 title in the body) |
+| `_meta.json` | helper | `id`, `title`, `slug_id`, `space_id`, `parent_page_id`, `position`, `icon`, `base_revision_hash`, file paths |
 
-Child pages become nested subdirectories under the parent page's directory.
+Child pages are nested subdirectories under the parent page's directory. The helper derives a page's parent from this directory nesting, so moving a directory re-parents the page on the next sync.
 
-## Directory naming rules
+## Replica root files
 
-Applied level-by-level, not globally:
+| File | Holds |
+| --- | --- |
+| `_replica.json` | space header: `space_id`, `slug`, `name` |
+| `_tree.json` | the last-synced tree snapshot (per-page id, parent, position, icon) used as the reconcile baseline |
 
-1. **Base**: use the filesystem-safe page title as the directory name
-2. **Sibling collision**: if two sibling pages resolve to the same base name, append `__{slug_id}` to every page in the collision set
-3. **Fallback**: if `slug_id` is missing or still collides, append `__{short_page_id}` (first 8 characters of the page UUID)
-4. **Numeric fallback**: if still colliding, append `__{short_page_id}-{n}` with incrementing `n`
+## Working-copy discovery
 
-## Source of truth rules
+When a sync tool is called with only an id, the helper resolves the replica root by scanning `DOCMOST_REPLICA_BASE` (default: the helper's current working directory) for a `_replica.json` whose `space_id` matches. Pass an explicit `local_root` to override. In this repository the replica of the service's own documentation space is tracked at `Docmost-mcp-crud/`.
 
-| Scenario | Source of truth |
-|---|---|
-| No local replica exists | Remote Docmost |
-| Replica exists, no newer local edits | Remote Docmost (client materializes or refreshes via `pull_replica`) |
-| Local replica has newer edits | Replica content is ahead until the sync workflow resolves the state |
-| Local and remote both changed | Neither side wins automatically; inspect `get_sync_diff` first |
+## Sync (reconcile)
 
-## Editing policy
+1. Edit `page.md` and/or move page directories.
+2. Call `sync_space(space_id)` (or `sync_page` / `sync_page_tree`) with only the id.
+3. The helper builds the local page set plus `_tree.json`, calls the server reconcile brain, applies the result (push / create / pull / move / materialize), and realigns each `_meta.json` `base_revision_hash` and the `_tree.json` snapshot.
+4. Only `conflicts` and `deletion_confirmations` need a model decision (`resolve_conflict` / `confirm_deletion`).
 
-- Apply documentation edits to the selected local working-copy replica, not directly to remote Docmost
-- Use `create_local_replica_page(..., local_root?, existing_dir_names=...)` to get the canonical local-only scaffold plan, then write those files on the client
-- When local files are edited, use `get_sync_status(..., pages=[...])` to report which replica files changed and which remote pages they correspond to
-- Use `push_replica(..., pages=[...], local_root?)` and `pull_replica(..., pages=[...], local_root?)` as the primary sync workflow, and only use `force` after reviewing clashes
-- If one working copy pushes before another, the stale working copy must pull or deliberately force after diff review
+`base_revision_hash` matters: when local and remote differ and the base is missing, the engine classifies the page as conflicted rather than allowing a clean push. The helper keeps it aligned after every successful sync.
 
-## Using the replica tools
+## Low-level escape hatches
 
-| When | Use |
-|---|---|
-| Building or refreshing an existing remote space locally | `get_replica_structure(space_id, local_root?)` |
-| Creating a new local-only page not yet on remote | `create_local_replica_page(space_id, ..., local_root?, existing_dir_names=...)` |
-| Mapping a local file back to its remote page | Read `_meta.json` in the page directory |
-| Discovering which pages are out of sync | `get_sync_status(space_id, SyncStatusIn(...))` |
-| Inspecting exact line-based clashes | `get_sync_diff(space_id, SyncDiffIn(...))` |
-| Refreshing local files from remote | `pull_replica(space_id, selection)` returns canonical remote snapshots for the client to write locally |
-| Sending local changes to remote | `push_replica(space_id, selection)` writes the client-supplied page state to Docmost |
+`push_pages`, `pull_pages`, `accept_remote`, and the stash tools (`stash_page` / `get_stash` / `clear_stash`) remain for manual override. Normal work goes through the three sync tools.
 
-## Implementation notes
+## Server-side replica planners
 
-- `_resolve_level_directory_names()` in `app/query/replica.py` resolves names for a full sibling group before assigning any, so collision detection is consistent
-- The recursive `_build_replica_level()` walks the `PageTreeNode` tree from `get_space_tree()` and builds `ReplicaTreeNode` objects
-- `app/query/replica.py` performs no file I/O. The client writes local files; `app/sync/service.py` only plans paths, compares client-local page state to Docmost, and performs safe remote writes
+The server also exposes replica structure / standards planners (`get_replica_structure`, `get_replica_standards`, `resolve_replica_directory_name`) used by the operator `/mcp` surface and the `/sync` routes. These plan canonical paths but perform no client IO.

@@ -1,44 +1,26 @@
-# Release
+This page summarizes what the service currently provides. The service is a private bridge used to give an MCP-consuming model (Claude Code) versioned, reconcilable access to a live Docmost deployment.
 
-## v1.0.0 (baseline)
+## Current capabilities
 
-First stable release of the Docmost MCP service.
+- REST API over Docmost: spaces, pages, tree, create / update / move / delete, all through a bridge write pipeline.
+- Bridge-owned version state in a separate PostgreSQL database: a head plus append-only version history per page, with write intents and receipts.
+- Single revision-hash derivation from Docmost read-back content, so every surface (helper, direct CRUD, the worker, and direct Docmost-UI edits) agrees on the hash.
+- A reconcile brain (`POST /v1/spaces/{id}/reconcile`) that classifies each page three-way and applies clean one-sided changes, returning conflicts and deletion confirmations for a decision.
+- A helper-facing contract under `/v1` and `/helper/v1` (reads, writes, move, snapshots, reconcile, resolve, confirm-deletion) plus batch and observe routes under `/auto-mcp`.
+- A background observer worker that folds direct-Docmost-UI edits into bridge state for every space on an interval, and backfills spaces that already hold content.
+- A client-side helper (stdio MCP) that is the model's only Docmost surface and owns the local replica.
+- An operator `/mcp` HTTP surface for inspection and emergency override.
 
-### Distribution
+## Surfaces at a glance
 
-The service is run from source via Docker Compose on the server hosting Docmost (build-and-run; no
-separate registry pull required). See [Deployment](../Deployment/page.md) for the current setup.
+| Surface | Audience | Transport |
+| --- | --- | --- |
+| `docmost-helper` | the model | stdio |
+| REST + `/v1` + `/helper/v1` + `/auto-mcp` | the helper, and direct HTTP integrations | HTTP |
+| `/mcp` | a human operator | streamable HTTP |
 
-### What was included in v1.0.0
+## Constraints
 
-- REST API for Docmost: spaces, pages, children, create, update, delete
-- MCP server exposing the core operations as callable tools
-- Markdown in / markdown out
-- Auth handled transparently on every write request
-- Fully environment-driven - no hardcoded values
-- Docker Compose setup with shared external network support
-- Hardened MCP server instructions: all write tool IDs must originate from live tool responses,
-  never inferred or invented
-
-### Known characteristics
-
-Context-window usage is high per session when used through an AI coding assistant. A full workflow
-(refactoring, re-analysing, local replica management, remote sync) typically consumes tens to a few
-hundred KB of context for a tested case of roughly 25 documentation files.
-
-### Limitations (v1.0.0)
-
-- REST write routes return page identity and metadata only - content is not echoed back. Use a
-  page read if content verification is needed after a write.
-- Space slugs must be alphanumeric, no dashes or spaces (a Docmost constraint).
-
-## Since v1.0.0
-
-Later work added, and the service now includes:
-
-- A **local-first replica and sync workflow** (status, diff, pull, push) for maintaining a local
-  editable copy of remote docs and reconciling changes safely.
-- A **separate bridge state database** that records version and sync state around each remote write.
-
-See [Replica System](../Replica-System/page.md), [REST API](../REST-API/page.md), and
-[Architecture](../Architecture/page.md) for details.
+- Content is markdown in and out; the page title is a separate field; use plain ASCII punctuation.
+- Space slugs must be alphanumeric (no spaces or dashes), a Docmost constraint.
+- Write operations require Docmost v0.71.1 or later.

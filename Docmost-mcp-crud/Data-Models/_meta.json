@@ -1,12 +1,12 @@
 {
   "id": "019d682d-2899-7c19-b4c6-033e9034a4f3",
-  "title": "Data-Models",
+  "title": "Data Models",
   "slug_id": "9lkVbvfzOB",
   "parent_page_id": null,
-  "local_dir_name": "Data-Models",
-  "local_dir_path": "./Docmost-mcp-crud/Data-Models",
-  "content_file_path": "./Docmost-mcp-crud/Data-Models/page.md",
-  "meta_file_path": "./Docmost-mcp-crud/Data-Models/_meta.json",
-  "source": "remote-synced",
-  "space_id": "019d682b-1af2-7333-aab6-2ebcbeb55cff"
+  "parent_local_dir_path": null,
+  "space_id": "019d682b-1af2-7333-aab6-2ebcbeb55cff",
+  "position": "a02jp",
+  "base_revision_hash": "e41d63b0b7160a8d8c64d260483ae4aab9b2f2a2b489846f03de9e23cea3aafb",
+  "content_file_path": "Docmost-mcp-crud/Data-Models/page.md",
+  "meta_file_path": "Docmost-mcp-crud/Data-Models/_meta.json"
 }

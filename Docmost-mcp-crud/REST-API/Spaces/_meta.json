@@ -3,10 +3,10 @@
   "title": "Spaces",
   "slug_id": "iv5JvzmFeV",
   "parent_page_id": "019d682d-2ca8-7933-9210-92535dc1c1be",
-  "local_dir_name": "Spaces",
-  "local_dir_path": "./Docmost-mcp-crud/REST-API/Spaces",
-  "content_file_path": "./Docmost-mcp-crud/REST-API/Spaces/page.md",
-  "meta_file_path": "./Docmost-mcp-crud/REST-API/Spaces/_meta.json",
-  "source": "remote-synced",
-  "space_id": "019d682b-1af2-7333-aab6-2ebcbeb55cff"
+  "parent_local_dir_path": "REST-API",
+  "space_id": "019d682b-1af2-7333-aab6-2ebcbeb55cff",
+  "position": "a27A4",
+  "base_revision_hash": "5f4e2a95198e3d657b68cc36e01913524f16eac55a899810dca71d75ec11839d",
+  "content_file_path": "Docmost-mcp-crud/REST-API/Spaces/page.md",
+  "meta_file_path": "Docmost-mcp-crud/REST-API/Spaces/_meta.json"
 }

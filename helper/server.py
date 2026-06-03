@@ -30,11 +30,21 @@ except Exception as _exc:  # handshake is best-effort; the helper still starts
 mcp = FastMCP(
     "docmost-helper",
     instructions=(
-        "Client-side helper for Docmost sync and write operations. "
-        "Use this server for all Docmost operations — reads, writes, and sync. "
-        "Never call the server-side docmost-mcp MCP directly for normal workflows; "
-        "use these tools instead. "
-        "For conflict resolution: stash_page → accept_remote → get_stash → merge → push_pages → clear_stash."
+        "Client-side helper for Docmost. This stdio MCP is the model's ONLY Docmost surface — "
+        "use it for all reads, writes, and sync. Never call the server-side docmost-mcp /mcp HTTP "
+        "surface; that is an operator-only inspection fallback. The helper reaches the server over "
+        "REST (/v1, /helper/v1, /auto-mcp).\n\n"
+        "Normal work is reconcile-first: edit page.md locally (and/or move page directories to "
+        "restructure), then call sync_space(space_id) — or sync_page / sync_page_tree — with only "
+        "the id. The helper diffs, versions, and applies push/create/pull/move automatically, and "
+        "returns synced_count + applied plus only the items needing a decision: conflicts and "
+        "deletion_confirmations. Resolve a conflict with resolve_conflict(space_id, page_id, "
+        "merged_content); apply a deletion with confirm_deletion(space_id, page_id, direction). Ask "
+        "the user when a merge or deletion is unclear. Never force.\n\n"
+        "create_page / update_page / delete_page / move_page / push_pages / pull_pages / "
+        "accept_remote and the stash tools are low-level escape hatches, not the normal path. "
+        "Content is markdown; the page title is a separate parameter (never an H1 in the body); "
+        "use plain ASCII punctuation."
     ),
 )
 

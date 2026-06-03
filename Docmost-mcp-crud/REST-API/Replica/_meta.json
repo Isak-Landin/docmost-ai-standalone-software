@@ -3,10 +3,10 @@
   "title": "Replica",
   "slug_id": "HShMmoyHWk",
   "parent_page_id": "019d682d-2ca8-7933-9210-92535dc1c1be",
-  "local_dir_name": "Replica",
-  "local_dir_path": "./Docmost-mcp-crud/REST-API/Replica",
-  "content_file_path": "./Docmost-mcp-crud/REST-API/Replica/page.md",
-  "meta_file_path": "./Docmost-mcp-crud/REST-API/Replica/_meta.json",
-  "source": "remote-synced",
-  "space_id": "019d682b-1af2-7333-aab6-2ebcbeb55cff"
+  "parent_local_dir_path": "REST-API",
+  "space_id": "019d682b-1af2-7333-aab6-2ebcbeb55cff",
+  "position": "a38y1",
+  "base_revision_hash": "dffbd5032cb29de203041bd629ddd17f025cd86def766c479e78f6e567499ecb",
+  "content_file_path": "Docmost-mcp-crud/REST-API/Replica/page.md",
+  "meta_file_path": "Docmost-mcp-crud/REST-API/Replica/_meta.json"
 }
