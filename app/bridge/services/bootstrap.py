@@ -8,7 +8,7 @@ from app.bridge.db.schema import ensure_schema
 from app.bridge.repositories.observer_checkpoints import upsert_observer_checkpoint
 from app.bridge.repositories.page_heads import list_page_heads_for_space, upsert_page_head
 from app.bridge.repositories.page_versions import upsert_page_version
-from app.bridge.services.versioning import snapshot_from_page
+from app.bridge.services.canonical import snapshot_from_fetched_page
 from app.query.docmost import get_page as fetch_page
 from app.query.docmost import list_pages as fetch_pages
 
@@ -39,19 +39,7 @@ def ensure_space_bootstrapped(space_id: UUID) -> None:
         snapshots = []
         for remote_page in missing_pages:
             full_page = fetch_page(space_id, remote_page.id)
-            snapshots.append(
-                snapshot_from_page(
-                    page_id=full_page.id,
-                    space_id=full_page.space_id,
-                    title=full_page.title,
-                    slug_id=full_page.slug_id,
-                    parent_page_id=full_page.parent_page_id,
-                    content=full_page.content,
-                    remote_updated_at=full_page.updated_at,
-                    position=full_page.position,
-                    icon=full_page.icon,
-                )
-            )
+            snapshots.append(snapshot_from_fetched_page(full_page))
 
         with get_conn() as conn:
             with conn.cursor() as cur:

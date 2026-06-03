@@ -25,6 +25,7 @@ from app.bridge.repositories.write_receipts import (
 )
 from app.bridge.schemas.operations import BridgeWriteResult
 from app.bridge.services.bootstrap import ensure_space_bootstrapped
+from app.bridge.services.canonical import canonical_page_snapshot
 from app.bridge.services.normalization import apply_content_operation, canonicalize_title
 from app.bridge.services.versioning import assert_head_alignment, snapshot_from_page
 from app.query.prosemirror import prosemirror_to_markdown
@@ -98,17 +99,8 @@ def create_page_via_bridge(
         )
         remote_page = remote_response.get("page", remote_response)
         remote_page_id = UUID(str(remote_page["id"]))
-        finalized_snapshot = snapshot_from_page(
-            page_id=remote_page_id,
-            space_id=space_id,
-            title=remote_page.get("title") or snapshot.title,
-            slug_id=remote_page.get("slugId") or remote_page.get("slug_id"),
-            parent_page_id=_coerce_uuid(remote_page.get("parentPageId") or remote_page.get("parent_page_id")) or parent_page_id,
-            content=snapshot.content,
-            remote_updated_at=remote_page.get("updatedAt") or remote_page.get("updated_at"),
-            position=remote_page.get("position"),
-            icon=remote_page.get("icon"),
-        )
+        # Hash basis = Docmost read-back (single canonical derivation), never the input markdown.
+        finalized_snapshot = canonical_page_snapshot(space_id, remote_page_id)
         return _finalize_write(
             intent_id=intent.id,
             snapshot=finalized_snapshot,
@@ -219,17 +211,8 @@ def update_page_via_bridge(
             icon=icon,
         )
         remote_page = remote_response.get("page", remote_response)
-        finalized_snapshot = snapshot_from_page(
-            page_id=page_id,
-            space_id=remote_before.space_id,
-            title=remote_page.get("title") or target_snapshot.title,
-            slug_id=remote_page.get("slugId") or remote_page.get("slug_id") or remote_before.slug_id,
-            parent_page_id=_coerce_uuid(remote_page.get("parentPageId") or remote_page.get("parent_page_id")) or remote_before.parent_page_id,
-            content=target_snapshot.content,
-            remote_updated_at=remote_page.get("updatedAt") or remote_page.get("updated_at"),
-            position=remote_page.get("position") or remote_before.position,
-            icon=remote_page.get("icon") if remote_page.get("icon") is not None else resolved_icon,
-        )
+        # Hash basis = Docmost read-back (single canonical derivation), never the input markdown.
+        finalized_snapshot = canonical_page_snapshot(remote_before.space_id, page_id)
         return _finalize_write(
             intent_id=intent.id,
             snapshot=finalized_snapshot,
@@ -294,19 +277,8 @@ def move_page_via_bridge(
         remote_page = remote_response.get("page", remote_response) if isinstance(remote_response, dict) else {}
         if not isinstance(remote_page, dict):
             remote_page = {}
-        new_parent = _coerce_uuid(remote_page.get("parentPageId") or remote_page.get("parent_page_id")) or target_parent
-        new_position = remote_page.get("position") or position
-        finalized_snapshot = snapshot_from_page(
-            page_id=page_id,
-            space_id=remote_before.space_id,
-            title=remote_before.title,
-            slug_id=remote_before.slug_id,
-            parent_page_id=new_parent,
-            content=remote_before.content,
-            remote_updated_at=remote_page.get("updatedAt") or remote_page.get("updated_at") or remote_before.updated_at,
-            position=new_position,
-            icon=remote_before.icon,
-        )
+        # Hash basis = Docmost read-back (single canonical derivation), reflecting the new parent/position.
+        finalized_snapshot = canonical_page_snapshot(remote_before.space_id, page_id)
         return _finalize_write(
             intent_id=intent.id,
             snapshot=finalized_snapshot,

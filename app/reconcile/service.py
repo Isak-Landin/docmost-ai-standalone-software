@@ -220,6 +220,7 @@ def _apply_create(space_id: UUID, page: ReconcilePageIn, parent_page_id, out: Re
                 position=remote.get("position") or page.position,
                 icon=remote.get("icon") if remote.get("icon") is not None else page.icon,
                 base_revision_hash=res.base_revision_hash,
+                content=res.content,
             )
         )
         return res.page_id
@@ -361,8 +362,9 @@ def _reconcile_tracked(
     else:
         action = "structural"
 
-    # page.md only needs rewriting when the remote content moved (remote_ahead on content).
-    content = head2.content if content_state == "remote_ahead" else None
+    # Always hand back the canonical (Docmost-rendered) content so the local file settles to the
+    # exact same form the head was hashed from - this is what prevents input-vs-rendered drift.
+    content = head2.content
 
     out.applied.append(
         ReconcileAppliedItem(

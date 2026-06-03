@@ -14,8 +14,8 @@ from app.bridge.repositories.write_intents import (
 from app.bridge.repositories.write_receipts import get_pending_write_receipt
 from app.bridge.schemas.operations import ObserveSpaceResult
 from app.bridge.services.bootstrap import ensure_space_bootstrapped
+from app.bridge.services.canonical import snapshot_from_fetched_page
 from app.bridge.services.reconciliation import mark_write_intents_applied, reconcile_stale_pending_write_intents
-from app.bridge.services.versioning import snapshot_from_page
 from app.query.docmost import get_page as fetch_page
 from app.query.docmost import list_pages as fetch_pages
 
@@ -44,17 +44,7 @@ def observe_space(space_id: UUID) -> ObserveSpaceResult:
                     continue
 
                 full_page = fetch_page(space_id, remote_page.id)
-                snapshot = snapshot_from_page(
-                    page_id=full_page.id,
-                    space_id=full_page.space_id,
-                    title=full_page.title,
-                    slug_id=full_page.slug_id,
-                    parent_page_id=full_page.parent_page_id,
-                    content=full_page.content,
-                    remote_updated_at=full_page.updated_at,
-                    position=full_page.position,
-                    icon=full_page.icon,
-                )
+                snapshot = snapshot_from_fetched_page(full_page)
                 current_head = heads.get(remote_page.id)
 
                 receipt = get_pending_write_receipt(cur, page_id=remote_page.id, expected_revision_hash=snapshot.revision_hash)
