@@ -12,23 +12,46 @@ cp .env.example .env
 # Edit .env — set DOCMOST_MCP_SERVER_URL to the running server base URL
 ```
 
-## Registration in `.mcp.json`
+## Registration with Claude Code
 
-Add to the repo-root `.mcp.json`:
+The helper is a **stdio** MCP. Register it in either of Claude Code's two MCP scopes — the
+entry is identical, only the location differs:
+
+- **User / home scope** (`$CLAUDE_CONFIG_DIR/.claude.json` → `mcpServers`, falling back to
+  `~/.claude.json`). A home-scoped entry loads in **every** session regardless of directory, so
+  the model always has the Docmost surface. *This is how the live environment is set up* (see the
+  "MCP & skills setup" page in the `Docmost-MCP-Service` space for the exact files).
+- **Project scope** (`.mcp.json` at the repo root). A project-scoped entry loads **only** when
+  Claude Code runs in that directory.
 
 ```json
 {
   "mcpServers": {
     "docmost-helper": {
       "type": "stdio",
-      "command": "/absolute/path/to/docmost-mcp-server/helper/.venv/bin/python3",
+      "command": "/absolute/path/to/docmost-mcp-server/helper/.venv/bin/python",
       "args": ["/absolute/path/to/docmost-mcp-server/helper/server.py"]
     }
   }
 }
 ```
 
-The helper stdio server is additive — it loads alongside any other MCPs registered in `.mcp.json` or the Claude home config.
+Use **absolute** paths to this repo's helper venv and `server.py` — then a home-scoped entry
+works from any directory. After (re)starting Claude Code (or reconnecting via `/mcp`), the model
+sees the tools as `mcp__docmost-helper__*`. On startup the helper performs a best-effort
+`/v1/contract` handshake and warns on stderr if the server's contract version differs.
+
+The helper is additive — it loads alongside any other MCPs in either scope. Keep the scopes
+**disjoint** (do not register the same MCP in both repo and home) to avoid duplicate tool listings.
+
+## Using it from Claude
+
+The model uses the helper for **all** Docmost reads, writes, and sync — never the server-side
+`/mcp` HTTP surface (that is a quiet operator/inspection fallback). Normal flow: edit `page.md`
+locally (and/or move page directories to restructure), then call `sync_space(space_id)` (or
+`sync_page` / `sync_page_tree`) with only the id. The helper reconciles everything; the model
+only acts on the `conflicts` / `deletion_confirmations` a sync returns (via `resolve_conflict` /
+`confirm_deletion`), and asks the user if a resolution is unclear. See "Sync model" below.
 
 ## Environment
 
