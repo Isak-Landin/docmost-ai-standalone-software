@@ -159,21 +159,31 @@ def _id_by_dir(local_paths: list[str]) -> dict[str, str]:
     return mapping
 
 
-def _local_parent_id(local_path: str, id_by_dir: dict[str, str], root: str) -> str | None:
-    """Derive a page's parent from the local directory nesting (the model moves dirs, not _meta)."""
+def _nearest_ancestor(local_path: str, dir_map: dict[str, Any], root: str) -> Any:
+    """Walk up the page dir's ancestors; return the first ancestor that is itself a page dir."""
     root_abs = os.path.abspath(root)
     cur = os.path.dirname(os.path.dirname(os.path.abspath(local_path)))  # the page dir's parent dir
     while True:
-        if cur in id_by_dir:
-            return id_by_dir[cur]
+        if cur in dir_map:
+            return dir_map[cur]
         if cur == root_abs or cur == os.path.dirname(cur):
             return None
         cur = os.path.dirname(cur)
 
 
+def _local_parent_id(local_path: str, id_by_dir: dict[str, str], root: str) -> str | None:
+    """Derive a page's parent id from the local directory nesting (the model moves dirs, not _meta)."""
+    return _nearest_ancestor(local_path, id_by_dir, root)
+
+
+def _path_by_dir(local_paths: list[str]) -> dict[str, str]:
+    return {os.path.abspath(os.path.dirname(lp)): lp for lp in local_paths}
+
+
 def _build_reconcile_payload(root: str, include_ids: set[str] | None = None) -> tuple[list[dict], list[dict]]:
     local_paths = find_local_pages(root)
     id_by_dir = _id_by_dir(local_paths)
+    path_by_dir = _path_by_dir(local_paths)
     pages: list[dict[str, Any]] = []
     for lp in local_paths:
         meta = read_meta(lp)
@@ -191,6 +201,9 @@ def _build_reconcile_payload(root: str, include_ids: set[str] | None = None) -> 
         parent = _local_parent_id(lp, id_by_dir, root)
         if parent:
             entry["parent_page_id"] = parent
+        parent_path = _nearest_ancestor(lp, path_by_dir, root)
+        if parent_path:
+            entry["parent_local_path"] = parent_path
         if meta.get("position") is not None:
             entry["position"] = meta["position"]
         if meta.get("icon") is not None:

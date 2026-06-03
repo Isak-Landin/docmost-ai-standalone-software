@@ -122,9 +122,9 @@ def reconcile(space_id: UUID, request: ReconcileIn) -> ReconcileOut:
 
     out = ReconcileOut(scope=request.scope)
 
-    # (1) local-only new pages -> create
-    for page in local_new:
-        _apply_create(space_id, page, out)
+    # (1) local-only new pages -> create in dependency order (parents before children),
+    # resolving a child's parent to its just-created parent via parent_local_path.
+    _apply_creates(space_id, local_new, out)
 
     # (2) tracked local pages -> classify + apply
     for pid, page in local_by_id.items():
@@ -172,13 +172,40 @@ def reconcile(space_id: UUID, request: ReconcileIn) -> ReconcileOut:
 # Per-page handling
 # ---------------------------------------------------------------------------
 
-def _apply_create(space_id: UUID, page: ReconcilePageIn, out: ReconcileOut) -> None:
+def _apply_creates(space_id: UUID, local_new: list[ReconcilePageIn], out: ReconcileOut) -> None:
+    """Create local-only pages parents-first, so a child nests under a sibling created in
+    the same pass (its parent has no id until created). Resolves via parent_local_path."""
+    created_by_path: dict[str, UUID] = {}
+    remaining = list(local_new)
+    progress = True
+    while remaining and progress:
+        progress = False
+        deferred: list[ReconcilePageIn] = []
+        for page in remaining:
+            parent = page.parent_page_id
+            if parent is None and page.parent_local_path:
+                if page.parent_local_path in created_by_path:
+                    parent = created_by_path[page.parent_local_path]
+                else:
+                    deferred.append(page)  # parent is a new page not created yet
+                    continue
+            new_id = _apply_create(space_id, page, parent, out)
+            if new_id is not None and page.local_path:
+                created_by_path[page.local_path] = new_id
+            progress = True
+        remaining = deferred
+    # Unresolvable parent (cycle / missing): create with whatever explicit parent exists.
+    for page in remaining:
+        _apply_create(space_id, page, page.parent_page_id, out)
+
+
+def _apply_create(space_id: UUID, page: ReconcilePageIn, parent_page_id, out: ReconcileOut) -> UUID | None:
     try:
         res = create_page_via_bridge(
             space_id=space_id,
             title=page.title,
             content=page.content,
-            parent_page_id=page.parent_page_id,
+            parent_page_id=parent_page_id,
             caller_mode="auto_sync",
         )
         remote = res.remote_page or {}
@@ -195,8 +222,10 @@ def _apply_create(space_id: UUID, page: ReconcilePageIn, out: ReconcileOut) -> N
                 base_revision_hash=res.base_revision_hash,
             )
         )
+        return res.page_id
     except Exception as exc:  # best-effort per page
         out.errors.append(ReconcileErrorItem(page_id=None, local_path=page.local_path, message=str(exc)))
+        return None
 
 
 def _conflict_item(page: ReconcilePageIn, head: PageHeadRecord | None, reason: str) -> ReconcileConflictItem:

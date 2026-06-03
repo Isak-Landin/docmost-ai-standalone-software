@@ -23,6 +23,7 @@ class ReconcilePageIn(BaseModel):
     icon: Optional[str] = None
     base_revision_hash: Optional[str] = Field(None, description="Recorded sync base (head revision at last successful sync).")
     local_path: Optional[str] = Field(None, description="Helper-side path for result correlation; opaque to the server.")
+    parent_local_path: Optional[str] = Field(None, description="local_path of the parent page (dir nesting). Lets the server nest a new child under a sibling created in the same pass.")
 
 
 class ReconcileTreeNodeIn(BaseModel):
