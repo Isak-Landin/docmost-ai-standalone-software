@@ -4,9 +4,11 @@ from typing import Any
 from uuid import UUID
 
 import os
+import shutil
 
 from helper.client import (
     batch_apply,
+    confirm_deletion_remote,
     create_snapshot,
     delete_page as client_delete_page,
     delete_snapshot,
@@ -14,6 +16,8 @@ from helper.client import (
     get_space,
     get_space_tree,
     list_pages,
+    reconcile as client_reconcile,
+    resolve_conflict_remote,
 )
 from helper.replica import (
     clear_active_snapshot,
@@ -24,11 +28,13 @@ from helper.replica import (
     read_page,
     read_tree_snapshot,
     record_active_snapshot,
+    resolve_local_root,
     resolve_page_dir,
     update_meta_after_pull,
     update_meta_after_sync,
     write_meta,
     write_page,
+    write_replica_header,
     write_tree_snapshot,
 )
 
@@ -116,81 +122,210 @@ def sync_space(
     local_root: str | None = None,
 ) -> dict[str, Any]:
     space = get_space(space_id)
-    root = local_root or f"./{space.get('slug', str(space_id))}-replica"
+    root = resolve_local_root(str(space_id), slug=space.get("slug"), local_root=local_root)
+    write_replica_header(root, str(space_id), slug=space.get("slug"), name=space.get("name"))
+    return _reconcile_sync(space_id, root, scope="space", scope_id=None)
 
-    local_page_paths = find_local_pages(root)
-    local_page_ids: dict[str, str] = {}
-    for lp in local_page_paths:
-        meta = read_meta(lp)
-        pid = meta.get("id")
-        if pid:
-            local_page_ids[str(pid)] = lp
 
-    # Structural reconcile: a page present in the last-synced tree snapshot whose local
-    # file is now gone was deleted locally. Globbing alone cannot see a removed file, so
-    # the snapshot is the only source of truth. Surface as a confirmation, never auto-delete.
-    prev_tree = read_tree_snapshot(root)
-    deletion_candidates = [
-        {
-            "page_id": str(entry["page_id"]),
-            "parent_page_id": entry.get("parent_page_id"),
-            "reason": "in last-synced tree but local file removed",
-        }
-        for entry in prev_tree.get("pages", [])
-        if entry.get("page_id") and str(entry["page_id"]) not in local_page_ids
-    ]
-
-    push_result: dict[str, Any] = {"applied_count": 0, "drifted_count": 0, "results": []}
-    if local_page_paths:
-        push_result = push_pages(space_id, local_page_paths)
-        # Backfill local_page_ids with IDs assigned during creation of local-only pages.
-        # Without this, sync_space would try to pull pages that were just created.
-        for item in push_result.get("results", []):
-            if item.get("applied") and item.get("page_id") and item.get("local_path"):
-                local_page_ids[str(item["page_id"])] = item["local_path"]
-
-    # Fetch remote pages once and pull only those not already tracked locally.
-    remote_pages = list_pages(space_id)
-    deletion_candidate_ids = {c["page_id"] for c in deletion_candidates}
-    pulled: list[dict] = []
-    for rp in remote_pages:
-        pid = str(rp.get("page_id", ""))
-        if pid in local_page_ids or pid in deletion_candidate_ids:
-            # Locally removed but still remote: surfaced as a deletion candidate above.
-            # Don't silently re-materialize it this run — let the model confirm or ignore.
-            continue
-        page_detail = get_page(space_id, UUID(pid))
-        page_dir = resolve_page_dir(root, rp)
-        local_path = page_path_from_dir(page_dir)
-        write_page(local_path, page_detail.get("content") or "")
-        update_meta_after_pull(local_path, page_detail)
-        pulled.append({"page_id": pid, "local_path": local_path})
-
-    pull_result = {"pulled_count": len(pulled), "pages": pulled}
-
-    # Persist the post-sync tree (page id + parent) so the next sync can diff against it.
-    write_tree_snapshot(root, _current_tree_entries(root))
-
+def _reconcile_sync(
+    space_id: UUID,
+    root: str,
+    scope: str,
+    scope_id: UUID | None,
+    include_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    """Build the local payload, call the server reconcile brain, apply the result locally,
+    and return the model-facing summary (only conflicts and deletions carry content)."""
+    pages, tree = _build_reconcile_payload(root, include_ids=include_ids)
+    result = client_reconcile(space_id, scope, scope_id, pages, tree)
+    _apply_reconcile_result(root, space_id, result)
     return {
-        "pushed": push_result,
-        "pulled": pull_result,
-        "deletion_candidates": deletion_candidates,
+        "scope": result.get("scope"),
+        "synced_count": len(result.get("synced", [])),
+        "applied": result.get("applied", []),
+        "conflicts": result.get("conflicts", []),
+        "deletion_confirmations": result.get("deletion_confirmations", []),
+        "errors": result.get("errors", []),
     }
 
 
+def _id_by_dir(local_paths: list[str]) -> dict[str, str]:
+    """Map each page directory (absolute) to its tracked page id."""
+    mapping: dict[str, str] = {}
+    for lp in local_paths:
+        pid = read_meta(lp).get("id")
+        if pid:
+            mapping[os.path.abspath(os.path.dirname(lp))] = str(pid)
+    return mapping
+
+
+def _local_parent_id(local_path: str, id_by_dir: dict[str, str], root: str) -> str | None:
+    """Derive a page's parent from the local directory nesting (the model moves dirs, not _meta)."""
+    root_abs = os.path.abspath(root)
+    cur = os.path.dirname(os.path.dirname(os.path.abspath(local_path)))  # the page dir's parent dir
+    while True:
+        if cur in id_by_dir:
+            return id_by_dir[cur]
+        if cur == root_abs or cur == os.path.dirname(cur):
+            return None
+        cur = os.path.dirname(cur)
+
+
+def _build_reconcile_payload(root: str, include_ids: set[str] | None = None) -> tuple[list[dict], list[dict]]:
+    local_paths = find_local_pages(root)
+    id_by_dir = _id_by_dir(local_paths)
+    pages: list[dict[str, Any]] = []
+    for lp in local_paths:
+        meta = read_meta(lp)
+        pid = meta.get("id")
+        if include_ids is not None and (pid is None or str(pid) not in include_ids):
+            continue
+        entry: dict[str, Any] = {"content": read_page(lp), "local_path": lp}
+        title = meta.get("title") or extract_title_from_page(lp)
+        if title:
+            entry["title"] = title
+        if pid:
+            entry["page_id"] = str(pid)
+        if meta.get("base_revision_hash"):
+            entry["base_revision_hash"] = meta["base_revision_hash"]
+        parent = _local_parent_id(lp, id_by_dir, root)
+        if parent:
+            entry["parent_page_id"] = parent
+        if meta.get("position") is not None:
+            entry["position"] = meta["position"]
+        if meta.get("icon") is not None:
+            entry["icon"] = meta["icon"]
+        pages.append(entry)
+    tree = [
+        {
+            "page_id": str(n["page_id"]),
+            "parent_page_id": str(n["parent_page_id"]) if n.get("parent_page_id") else None,
+            "position": n.get("position"),
+            "icon": n.get("icon"),
+        }
+        for n in read_tree_snapshot(root).get("pages", [])
+        if n.get("page_id")
+    ]
+    return pages, tree
+
+
+def _apply_reconcile_result(root: str, space_id: UUID, result: dict[str, Any]) -> None:
+    for item in result.get("applied", []):
+        try:
+            _apply_applied_item(root, space_id, item)
+        except Exception:
+            pass  # best-effort; per-page failures are surfaced in result["errors"]
+    for item in result.get("synced", []):
+        try:
+            _refresh_synced_base(root, item)
+        except Exception:
+            pass
+    write_tree_snapshot(root, _current_tree_entries(root))
+
+
+def _refresh_synced_base(root: str, item: dict[str, Any]) -> None:
+    """Keep the local base aligned with the head even when nothing changed, so a later
+    remote-only change is classified as remote-ahead (a pull), never as a spurious conflict."""
+    base = item.get("base_revision_hash")
+    if not base:
+        return
+    lp = _find_existing_local_path(str(item["page_id"]), find_local_pages(root))
+    if not lp:
+        return
+    meta = read_meta(lp)
+    if meta.get("base_revision_hash") != base:
+        meta["base_revision_hash"] = base
+        write_meta(lp, meta)
+
+
+def _apply_applied_item(root: str, space_id: UUID, item: dict[str, Any]) -> None:
+    pid = str(item["page_id"])
+    content = item.get("content")
+    local_path = item.get("local_path") or _find_existing_local_path(pid, find_local_pages(root))
+    if local_path is None:
+        # Remote-only page (pulled/materialized): place it under its parent's local dir.
+        local_path = _materialize_local_path(root, item)
+    else:
+        # Existing page: relocate its dir if the remote parent differs from the local nesting.
+        local_path = _relocate_if_needed(root, local_path, item)
+    if content is not None:
+        write_page(local_path, content)
+    _write_meta_from_item(local_path, space_id, item)
+
+
+def _relocate_if_needed(root: str, local_path: str, item: dict[str, Any]) -> str:
+    local_paths = find_local_pages(root)
+    id_by_dir = _id_by_dir(local_paths)
+    parent_id = item.get("parent_page_id")
+    current_parent = _local_parent_id(local_path, id_by_dir, root)
+    if str(current_parent or "") == str(parent_id or ""):
+        return local_path  # local nesting already matches the remote parent
+    desired_parent_dir = root
+    if parent_id:
+        pp = _find_existing_local_path(str(parent_id), local_paths)
+        if pp is None:
+            return local_path  # parent not materialized locally yet; leave for a later pass
+        desired_parent_dir = os.path.dirname(pp)
+    cur_dir = os.path.dirname(local_path)
+    new_dir = os.path.join(desired_parent_dir, os.path.basename(cur_dir))
+    if os.path.abspath(new_dir) == os.path.abspath(cur_dir):
+        return local_path
+    os.makedirs(desired_parent_dir, exist_ok=True)
+    shutil.move(cur_dir, new_dir)
+    return page_path_from_dir(new_dir)
+
+
+def _materialize_local_path(root: str, item: dict[str, Any]) -> str:
+    parent_dir = root
+    parent_id = item.get("parent_page_id")
+    if parent_id:
+        pp = _find_existing_local_path(str(parent_id), find_local_pages(root))
+        if pp:
+            parent_dir = os.path.dirname(pp)
+    page_dir = resolve_page_dir(
+        parent_dir,
+        {"title": item.get("title"), "slug_id": item.get("slug_id"), "page_id": item["page_id"]},
+    )
+    return page_path_from_dir(page_dir)
+
+
+def _write_meta_from_item(local_path: str, space_id: UUID, item: dict[str, Any]) -> None:
+    meta = read_meta(local_path)
+    meta["id"] = str(item["page_id"])
+    if item.get("title") is not None:
+        meta["title"] = item["title"]
+    if item.get("slug_id") is not None:
+        meta["slug_id"] = item["slug_id"]
+    meta["space_id"] = str(space_id)
+    meta["parent_page_id"] = str(item["parent_page_id"]) if item.get("parent_page_id") else None
+    if item.get("position") is not None:
+        meta["position"] = item["position"]
+    if item.get("icon") is not None:
+        meta["icon"] = item["icon"]
+    if item.get("base_revision_hash"):
+        meta["base_revision_hash"] = item["base_revision_hash"]
+    meta["content_file_path"] = local_path
+    meta["meta_file_path"] = os.path.join(os.path.dirname(local_path), "_meta.json")
+    write_meta(local_path, meta)
+
+
 def _current_tree_entries(root: str) -> list[dict[str, Any]]:
-    """Snapshot every tracked local page as {page_id, parent_page_id, local_path}."""
+    """Snapshot every tracked local page (id, parent, position, icon) for next-sync diffing.
+    Parent is derived from directory nesting so a moved dir is detected on the next sync."""
+    local_paths = find_local_pages(root)
+    id_by_dir = _id_by_dir(local_paths)
     entries: list[dict[str, Any]] = []
-    for lp in find_local_pages(root):
+    for lp in local_paths:
         meta = read_meta(lp)
         pid = meta.get("id")
         if not pid:
             continue
-        parent = meta.get("parent_page_id")
         entries.append(
             {
                 "page_id": str(pid),
-                "parent_page_id": str(parent) if parent else None,
+                "parent_page_id": _local_parent_id(lp, id_by_dir, root),
+                "position": meta.get("position"),
+                "icon": meta.get("icon"),
                 "local_path": lp,
             }
         )
@@ -298,16 +433,9 @@ def sync_page(
     page_id: UUID,
     local_root: str | None = None,
 ) -> dict[str, Any]:
-    root = local_root or f"./{_space_slug(space_id)}-replica"
-    local_paths = find_local_pages(root)
-    lp = _find_existing_local_path(str(page_id), local_paths)
-    pushed = (
-        push_pages(space_id, [lp], local_root=root)
-        if lp
-        else {"applied_count": 0, "drifted_count": 0, "results": []}
-    )
-    pulled = pull_pages(space_id, page_ids=[str(page_id)], local_root=root)
-    return {"page_id": str(page_id), "pushed": pushed, "pulled": pulled}
+    space = get_space(space_id)
+    root = resolve_local_root(str(space_id), slug=space.get("slug"), local_root=local_root)
+    return _reconcile_sync(space_id, root, scope="page", scope_id=page_id, include_ids={str(page_id)})
 
 
 def sync_page_tree(
@@ -315,25 +443,12 @@ def sync_page_tree(
     parent_page_id: UUID,
     local_root: str | None = None,
 ) -> dict[str, Any]:
-    root = local_root or f"./{_space_slug(space_id)}-replica"
+    space = get_space(space_id)
+    root = resolve_local_root(str(space_id), slug=space.get("slug"), local_root=local_root)
     tree = get_space_tree(space_id)
     node = _find_node(tree.get("roots", []), str(parent_page_id))
-    ids = _subtree_ids(node) if node else []
-    local_paths = find_local_pages(root)
-    id_to_path = {str(read_meta(p).get("id", "")): p for p in local_paths}
-    push_paths = [id_to_path[i] for i in ids if i in id_to_path]
-    pushed = (
-        push_pages(space_id, push_paths, local_root=root)
-        if push_paths
-        else {"applied_count": 0, "drifted_count": 0, "results": []}
-    )
-    pulled = pull_pages(space_id, page_ids=ids, local_root=root) if ids else {"pulled_count": 0, "pages": []}
-    return {
-        "parent_page_id": str(parent_page_id),
-        "synced_page_ids": ids,
-        "pushed": pushed,
-        "pulled": pulled,
-    }
+    ids = set(_subtree_ids(node)) if node else {str(parent_page_id)}
+    return _reconcile_sync(space_id, root, scope="tree", scope_id=parent_page_id, include_ids=ids)
 
 
 def _find_node(roots: list[dict], target_id: str) -> dict | None:
@@ -359,21 +474,27 @@ def resolve_conflict(
     merged_content: str,
     local_root: str | None = None,
 ) -> dict[str, Any]:
-    root = local_root or f"./{_space_slug(space_id)}-replica"
+    space = get_space(space_id)
+    root = resolve_local_root(str(space_id), slug=space.get("slug"), local_root=local_root)
     lp = _find_existing_local_path(str(page_id), find_local_pages(root))
     if not lp:
         return {"page_id": str(page_id), "resolved": False, "error": "page not found in local replica"}
+    title = read_meta(lp).get("title")
     stash = create_stash(space_id, page_id, lp)
-    accept_remote(space_id, page_id, local_path=lp, local_root=root)
-    write_page(lp, merged_content)
-    pushed = push_pages(space_id, [lp], local_root=root)
-    applied = any(r.get("applied") for r in pushed.get("results", []))
-    if applied:
-        consume_stash(space_id, page_id, stash["snapshot_id"], local_path=lp)
+    # Server pushes merged_content aligned to the CURRENT remote head (no force).
+    res = resolve_conflict_remote(space_id, page_id, merged_content, title=title)
+    resolved_content = res.get("content") if res.get("content") is not None else merged_content
+    write_page(lp, resolved_content)
+    meta = read_meta(lp)
+    if res.get("base_revision_hash"):
+        meta["base_revision_hash"] = res["base_revision_hash"]
+    write_meta(lp, meta)
+    consume_stash(space_id, page_id, stash["snapshot_id"], local_path=lp)
+    write_tree_snapshot(root, _current_tree_entries(root))
     return {
         "page_id": str(page_id),
-        "resolved": applied,
-        "pushed": pushed,
+        "resolved": bool(res.get("resolved")),
+        "base_revision_hash": res.get("base_revision_hash"),
         "snapshot_id": stash.get("snapshot_id"),
     }
 
@@ -384,15 +505,19 @@ def confirm_deletion(
     direction: str,
     local_root: str | None = None,
 ) -> dict[str, Any]:
-    root = local_root or f"./{_space_slug(space_id)}-replica"
+    space = get_space(space_id)
+    root = resolve_local_root(str(space_id), slug=space.get("slug"), local_root=local_root)
     lp = _find_existing_local_path(str(page_id), find_local_pages(root))
-    result: dict[str, Any] = {"page_id": str(page_id), "direction": direction}
-    if direction == "remote":
-        client_delete_page(space_id, page_id)
-        result["remote_deleted"] = True
+    res = confirm_deletion_remote(space_id, page_id, direction)
+    result: dict[str, Any] = {
+        "page_id": str(page_id),
+        "direction": direction,
+        "remote_deleted": bool(res.get("remote_deleted")),
+    }
     if lp:
         _remove_local_page(lp)
         result["local_removed"] = True
+    write_tree_snapshot(root, _current_tree_entries(root))
     return result
 
 

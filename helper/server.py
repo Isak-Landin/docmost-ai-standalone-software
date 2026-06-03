@@ -149,31 +149,43 @@ def move_page(space_id: str, page_id: str, position: str, parent_page_id: Option
 
 @mcp.tool()
 def sync_space(space_id: str, local_root: Optional[str] = None) -> dict:
-    """Full space sync: push all local pages, pull all remote-only pages."""
+    """Full bidirectional reconcile for a whole space in one pass. Pass ONLY the space id.
+    The helper does everything automatically: pushes local edits, creates local-only pages,
+    pulls remote changes, materializes new remote pages, applies moves/re-parents, and keeps
+    local + remote versions aligned. Returns synced_count plus only the items needing YOUR
+    decision: `conflicts` (each with remote_content, local_content, diff) and
+    `deletion_confirmations`. For a conflict call resolve_conflict; for a deletion call
+    confirm_deletion. If a resolution or deletion is unclear, ask the user. Never force."""
     return sync.sync_space(UUID(space_id), local_root=local_root)
 
 
 @mcp.tool()
 def sync_page(space_id: str, page_id: str, local_root: Optional[str] = None) -> dict:
-    """Sync one page by id: push it if locally changed, then refresh it from remote."""
+    """Reconcile a single page by id (same automated full-fidelity reconcile as sync_space,
+    scoped to one page). Returns synced_count, applied, conflicts, deletion_confirmations."""
     return sync.sync_page(UUID(space_id), UUID(page_id), local_root=local_root)
 
 
 @mcp.tool()
 def sync_page_tree(space_id: str, parent_page_id: str, local_root: Optional[str] = None) -> dict:
-    """Sync a page subtree by parent id: the parent page and all descendants (push changed, pull remote)."""
+    """Reconcile a page subtree by parent id (the parent plus all descendants), full-fidelity
+    and automated. Returns synced_count, applied, conflicts, deletion_confirmations."""
     return sync.sync_page_tree(UUID(space_id), UUID(parent_page_id), local_root=local_root)
 
 
 @mcp.tool()
 def resolve_conflict(space_id: str, page_id: str, merged_content: str, local_root: Optional[str] = None) -> dict:
-    """Resolve a conflicted page: stash local, rebase on the current remote, write your merged_content, and push it."""
+    """Resolve a conflict surfaced by a sync. The server pushes your merged_content aligned to
+    the CURRENT remote head (no force), then the helper writes it locally and re-aligns the base.
+    Provide the final merged markdown; ask the user first if the right merge is unclear."""
     return sync.resolve_conflict(UUID(space_id), UUID(page_id), merged_content, local_root=local_root)
 
 
 @mcp.tool()
 def confirm_deletion(space_id: str, page_id: str, direction: str, local_root: Optional[str] = None) -> dict:
-    """Confirm a deletion. direction='remote' soft-deletes the remote page and removes the local copy; direction='local' removes only the local copy (accepting a remote deletion)."""
+    """Confirm a deletion surfaced by a sync. direction='remote' soft-deletes the remote page and
+    drops the local copy; direction='local' accepts a remote deletion by dropping the local copy.
+    Sync never deletes on its own — ask the user if a deletion is unexpected."""
     return sync.confirm_deletion(UUID(space_id), UUID(page_id), direction, local_root=local_root)
 
 

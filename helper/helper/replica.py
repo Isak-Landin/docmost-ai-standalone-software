@@ -160,3 +160,62 @@ def read_tree_snapshot(local_root: str) -> dict[str, Any]:
         return json.loads(Path(_tree_path(local_root)).read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {"pages": []}
+
+
+# ---------------------------------------------------------------------------
+# _replica.json space header + working-copy discovery by space_id
+# ---------------------------------------------------------------------------
+
+
+def _replica_header_path(local_root: str) -> str:
+    return os.path.join(local_root, "_replica.json")
+
+
+def read_replica_header(local_root: str) -> dict[str, Any]:
+    try:
+        return json.loads(Path(_replica_header_path(local_root)).read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def write_replica_header(local_root: str, space_id: str, slug: str | None = None, name: str | None = None) -> None:
+    header = read_replica_header(local_root)
+    header["space_id"] = str(space_id)
+    if slug is not None:
+        header["slug"] = slug
+    if name is not None:
+        header["name"] = name
+    _atomic_write(_replica_header_path(local_root), json.dumps(header, indent=2, default=str))
+
+
+def replica_base_dir() -> str:
+    return os.environ.get("DOCMOST_REPLICA_BASE", ".")
+
+
+def discover_replica_root(space_id: str, base_dir: str | None = None) -> str | None:
+    base = Path(base_dir or replica_base_dir())
+    if not base.exists():
+        return None
+    for header in base.rglob("_replica.json"):
+        try:
+            data = json.loads(header.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if str(data.get("space_id")) == str(space_id):
+            return str(header.parent)
+    return None
+
+
+def resolve_local_root(
+    space_id: str,
+    slug: str | None = None,
+    local_root: str | None = None,
+    base_dir: str | None = None,
+) -> str:
+    if local_root:
+        return local_root
+    found = discover_replica_root(space_id, base_dir=base_dir)
+    if found:
+        return found
+    base = base_dir or replica_base_dir()
+    return os.path.join(base, f"{slug or space_id}-replica")

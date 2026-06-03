@@ -153,6 +153,45 @@ def observe(space_id: UUID) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Reconcile brain + resolution (/v1)
+# ---------------------------------------------------------------------------
+
+def reconcile(
+    space_id: UUID,
+    scope: str,
+    scope_id: UUID | None,
+    pages: list[dict[str, Any]],
+    tree: list[dict[str, Any]],
+) -> dict:
+    body: dict[str, Any] = {
+        "scope": scope,
+        "scope_id": str(scope_id) if scope_id else None,
+        "pages": pages,
+        "tree": tree,
+    }
+    return _post(f"/v1/spaces/{space_id}/reconcile", body)
+
+
+def resolve_conflict_remote(
+    space_id: UUID,
+    page_id: UUID,
+    merged_content: str,
+    title: str | None = None,
+    snapshot_id: str | None = None,
+) -> dict:
+    body: dict[str, Any] = {"merged_content": merged_content}
+    if title is not None:
+        body["title"] = title
+    if snapshot_id is not None:
+        body["snapshot_id"] = snapshot_id
+    return _post(f"/v1/spaces/{space_id}/pages/{page_id}/resolve", body)
+
+
+def confirm_deletion_remote(space_id: UUID, page_id: UUID, direction: str) -> dict:
+    return _post(f"/v1/spaces/{space_id}/pages/{page_id}/confirm-deletion", {"direction": direction})
+
+
+# ---------------------------------------------------------------------------
 # Snapshot operations
 # ---------------------------------------------------------------------------
 
