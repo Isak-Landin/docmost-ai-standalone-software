@@ -42,24 +42,37 @@ Full `_meta.json` schema (written by helper after each push/pull):
 `base_revision_hash` is updated by the helper after every successful push or pull.
 `active_snapshot` is written by `stash_page` and cleared by `clear_stash` or auto-expiry.
 
-## Normal push workflow
+## Normal sync workflow (reconcile)
 
-1. Edit `page.md` locally.
-2. Call `push_pages(space_id, local_paths=[...])` on `docmost-helper`.
-3. Helper reads local files, calls server bridge pipeline, updates `_meta.json`.
-4. If any pages drift: proceed to conflict resolution.
+The model only initiates a sync; the helper does all versioning, diffing, and file IO.
 
-## Conflict resolution workflow
+1. Edit `page.md` locally and/or restructure the replica (move a page directory to re-parent).
+2. Call `sync_space(space_id)` (or `sync_page(space_id, page_id)` /
+   `sync_page_tree(space_id, parent_page_id)`) on `docmost-helper`. Pass only the id(s).
+3. The helper builds the local page set + last-synced `_tree.json`, calls the server
+   `POST /v1/spaces/{id}/reconcile`, and applies the result locally: it pushes local edits,
+   creates local-only pages, pulls remote changes, materializes new remote pages, applies
+   moves/re-parents, and aligns both the bridge version and the local `_meta.json`
+   `base_revision_hash`. One pass, full fidelity (content, title, parent, position, icon).
+4. The result returns `synced_count` + `applied`, plus only the items needing a decision:
+   `conflicts` (each with `remote_content`, `local_content`, diff) and
+   `deletion_confirmations`. A clean sync needs no force and surfaces no conflicts.
 
-When `push_pages` returns pages with `action="drifted"`:
+## Conflict + deletion resolution
 
-1. `stash_page(space_id, page_id, local_path)` — saves local content server-side, returns `snapshot_id`.
-2. `accept_remote(space_id, page_id, local_path)` — overwrites local with remote, updates `_meta.json`.
-3. `get_stash(space_id, page_id, snapshot_id)` — retrieves pre-overwrite content for comparison.
-4. Read new local `page.md` (now the remote version).
-5. Write merged content to `page.md`.
-6. `push_pages` for the resolved page.
-7. `clear_stash(space_id, page_id, snapshot_id)` — mark snapshot consumed.
+When a sync returns `conflicts[]` or `deletion_confirmations[]`:
+
+- Conflict (both sides changed since the recorded base): inspect `remote_content` /
+  `local_content` / diff, then call
+  `resolve_conflict(space_id, page_id, merged_content)`. The server pushes the merged
+  content aligned to the current remote head (no force); the helper writes it locally and
+  re-aligns the base. Ask the user if the right merge is unclear.
+- Deletion: call `confirm_deletion(space_id, page_id, direction)` — `remote` soft-deletes the
+  remote page and drops the local copy; `local` accepts a remote deletion by dropping the
+  local copy. Sync never deletes on its own.
+
+`stash_page` / `accept_remote` / `push_pages` / `pull_pages` remain as low-level escape
+hatches for manual override; normal work goes through the three sync tools.
 
 ## IDs
 
