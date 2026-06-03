@@ -36,11 +36,23 @@ def _s(value) -> str | None:
 
 
 def _three_way(local: str | None, base: str | None, head: str | None) -> str:
-    """synced | local_ahead | remote_ahead | conflict for a single comparable field."""
+    """Content three-way. A None base is an UNKNOWN baseline (no recorded sync) -> conflict."""
     if local == head:
         return "synced"
     if base is None:
         return "conflict"
+    if base == head:
+        return "local_ahead"
+    if base == local:
+        return "remote_ahead"
+    return "conflict"
+
+
+def _three_way_struct(local: str | None, base: str | None, head: str | None) -> str:
+    """Structural three-way. None is a LEGITIMATE value (root parent / no icon), not unknown,
+    so it never forces a conflict. The baseline comes from the last-synced tree node."""
+    if local == head:
+        return "synced"
     if base == head:
         return "local_ahead"
     if base == local:
@@ -243,10 +255,10 @@ def _reconcile_tracked(
     # --- classify ---
     content_state = _three_way(local_hash, base, head_hash)
     if node is not None:
-        parent_state = _three_way(_s(page.parent_page_id), _s(node.parent_page_id), _s(head.parent_page_id))
-        position_state = _three_way(_s(page.position), _s(node.position), _s(head.position))
+        parent_state = _three_way_struct(_s(page.parent_page_id), _s(node.parent_page_id), _s(head.parent_page_id))
+        position_state = _three_way_struct(_s(page.position), _s(node.position), _s(head.position))
         structural_state = _combine(parent_state, position_state)
-        icon_state = _three_way(_s(page.icon), _s(node.icon), _s(head.icon))
+        icon_state = _three_way_struct(_s(page.icon), _s(node.icon), _s(head.icon))
     else:
         structural_state = "synced"
         icon_state = "synced"
@@ -306,7 +318,9 @@ def _reconcile_tracked(
     any_remote = "remote_ahead" in (content_state, structural_state, icon_state)
 
     if not any_local and not any_remote:
-        out.synced.append(ReconcileSyncedItem(page_id=pid, local_path=page.local_path))
+        out.synced.append(
+            ReconcileSyncedItem(page_id=pid, local_path=page.local_path, base_revision_hash=head_hash)
+        )
         return
 
     if content_state == "local_ahead":

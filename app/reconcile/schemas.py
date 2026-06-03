@@ -52,6 +52,7 @@ class ReconcileIn(BaseModel):
 class ReconcileSyncedItem(BaseModel):
     page_id: UUID
     local_path: Optional[str] = None
+    base_revision_hash: Optional[str] = Field(None, description="Current head hash; the helper refreshes a stale local base to this.")
 
 
 class ReconcileAppliedItem(BaseModel):
