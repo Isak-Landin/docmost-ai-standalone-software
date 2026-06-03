@@ -1,8 +1,13 @@
 # Automated Helper-Driven Sync - Design and Implementation Plan
 
-Status: forward-looking plan. The system is partially implemented; this document defines the target
-behavior and the work to reach it. Nothing here is built beyond the pieces explicitly marked as
-existing. Companion documents: `docs/automated-helper-sync-architecture.md` (the full architecture -
+Status: IMPLEMENTED and validated end to end (2026-06-02). These behavior invariants are built via
+the server reconcile brain (`POST /v1/spaces/{id}/reconcile`) and the helper reconcile pipeline, and
+verified through live-MCP scenario runs (content, title, create, pull/materialize, move/re-parent,
+deletions both directions, conflicts, version alignment). The wire contract (section 7) returns four
+buckets: `synced`, `applied` (push/create/pull/move), `conflicts`, `deletion_confirmations`; the
+section-7 "moves" bucket is folded into `applied` with `action="moved"`. Known minor gap: move to the
+ROOT parent (parent -> None) via reconcile is ambiguous in `move_page_via_bridge` (None keeps the
+current parent); re-parent under a page and reorder work. Companion documents: `docs/automated-helper-sync-architecture.md` (the full architecture -
 helper/server surfaces, the CRUD contract, resolution, and the phased build) and
 `docs/docmost-write-api.md` (Docmost REST write contract and the v0.71.1 requirement). This doc holds
 the behavior invariants those build on.

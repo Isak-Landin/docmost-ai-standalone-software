@@ -17,11 +17,13 @@ different machine.
 | Server-side bridge (`docmost-mcp-server`) | Docmost connectivity, bridge DB state, normalization, diffing, observer runs, write intents/receipts, REST routes, and MCP tools | It does **not** own or scan the client's working copy as the source of truth |
 | Client-side MCP consumer / helper | local replica file IO, working-copy selection, page edits, locally stored sync-base metadata, and deciding when to call status/diff/pull/push/force | It does **not** bypass the bridge by talking to the Docmost codebase directly |
 
-For normal local-first documentation work, the client edits its own replica, calls
-`get_sync_status` / `get_sync_diff`, then uses `push_replica` or `pull_replica`.
-Direct `create_page`, `update_page`, and `delete_page` remain available as
-low-level remote bridge actions, but they do not move local working-copy
-ownership to the server.
+For normal local-first documentation work, the consuming model uses the **docmost-helper**
+stdio MCP: it passes one id to `sync_space` / `sync_page` / `sync_page_tree` and the helper
+runs the full automated reconcile against the server's `POST /v1/spaces/{id}/reconcile` brain
+(push / create / pull / move plus local+remote version alignment), surfacing only conflicts
+and deletions for a decision. The server-side `/mcp` endpoint is a quiet operator/inspection
+fallback only — not the model's workflow surface. Direct `create_page`, `update_page`, and
+`delete_page` remain available as low-level bridge actions.
 
 ## MCP capabilities
 
@@ -67,6 +69,10 @@ integrations, manual inspection, and non-MCP automation.
 | `DELETE` | `/spaces/{space_id}/pages/{page_id}` | soft-delete a page |
 | `POST` | `/auto-mcp/spaces/{space_id}/pages/apply` | helper-facing batch create/update path using bridge version checks and bridge state |
 | `POST` | `/auto-mcp/spaces/{space_id}/observe` | run one observer pass and record remote changes in bridge state |
+| `POST` | `/v1/spaces/{space_id}/reconcile` | classify + apply a scoped bidirectional reconcile; returns synced / applied / conflicts / deletion_confirmations |
+| `POST` | `/v1/spaces/{space_id}/pages/{page_id}/resolve` | resolve a conflict: push merged content aligned to the current remote head (no force) |
+| `POST` | `/v1/spaces/{space_id}/pages/{page_id}/confirm-deletion` | apply a confirmed deletion (direction `remote` or `local`) |
+| `GET` | `/v1/contract` | helper&lt;-&gt;server contract version and capabilities |
 | `POST` | `/spaces/{space_id}/sync/local-pages` | scaffold a new local-only page in the chosen local working copy |
 | `POST` | `/spaces/{space_id}/sync/pull` | materialize or refresh the chosen local working copy from remote Docmost |
 | `POST` | `/spaces/{space_id}/sync/push` | push chosen local working-copy changes back to remote Docmost |

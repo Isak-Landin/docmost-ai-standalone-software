@@ -1,6 +1,9 @@
 # Automated Helper Sync - Architecture and Full Implementation Plan
 
-Status: forward-looking plan. This document is the architecture and end-to-end implementation plan
+Status: IMPLEMENTED and deployed (2026-06-02) - the server reconcile brain, helper reconcile pipeline,
+resolution endpoints, /v1 contract, worker, and /mcp demotion are all live and validated end to end.
+The reconcile response uses four buckets: synced / applied (push/create/pull/move) / conflicts /
+deletion_confirmations. The text below remains the architecture and end-to-end implementation plan
 for the automated helper-driven sync. It builds on, and does not restate, the behavior invariants in
 `docs/automated-helper-sync-plan.md` (sync semantics, deletions, structural/move rules, replica
 structure, drift guardrails). Read that first; this doc covers the surface move, the CRUD contract,
