@@ -30,6 +30,7 @@ from helper.replica import (
     record_active_snapshot,
     resolve_local_root,
     resolve_page_dir,
+    split_leading_h1,
     update_meta_after_pull,
     update_meta_after_sync,
     write_meta,
@@ -37,6 +38,21 @@ from helper.replica import (
     write_replica_header,
     write_tree_snapshot,
 )
+
+
+def _title_and_body(local_path: str, meta: dict[str, Any]) -> tuple[str | None, str]:
+    """Resolve a page's title and the body to send. A tracked page keeps its helper-owned
+    _meta.json title and full body. For a local-only page with no recorded title, a leading
+    '# H1' is lifted into the title AND stripped from the body, so Docmost never renders the
+    title plus a duplicate H1; if there is no leading H1 the first line is used as the title
+    (legacy fallback) and the body is left intact."""
+    raw = read_page(local_path)
+    if meta.get("title"):
+        return meta["title"], raw
+    h1_title, body = split_leading_h1(raw)
+    if h1_title:
+        return h1_title, body
+    return extract_title_from_page(local_path), raw
 
 
 def push_pages(
@@ -48,7 +64,7 @@ def push_pages(
 
     for local_path in local_paths:
         meta = read_meta(local_path)
-        content = read_page(local_path)
+        title, content = _title_and_body(local_path, meta)
         entry: dict[str, Any] = {
             "content": content,
             "local_path": local_path,
@@ -57,9 +73,6 @@ def push_pages(
         }
         if meta.get("id"):
             entry["page_id"] = meta["id"]
-
-        # Title: prefer _meta.json, fall back to first heading in page.md for local-only pages
-        title = meta.get("title") or extract_title_from_page(local_path)
         if title:
             entry["title"] = title
 
@@ -138,12 +151,19 @@ def _reconcile_sync(
     and return the model-facing summary (only conflicts and deletions carry content)."""
     pages, tree = _build_reconcile_payload(root, include_ids=include_ids)
     result = client_reconcile(space_id, scope, scope_id, pages, tree)
+    # Apply first: this is where the canonical content is written to the local replica files.
     _apply_reconcile_result(root, space_id, result)
+    # Model-facing summary: clean items carry metadata only. Page content is deliberately
+    # omitted from applied[] (it was already written to the local replica) so a clean sync
+    # does not flood the model's context. Only conflicts (remote/local content + diff) and
+    # errors carry content, because those need a decision.
+    applied = [{k: v for k, v in item.items() if k != "content"} for item in result.get("applied", [])]
     return {
         "scope": result.get("scope"),
-        "synced_count": len(result.get("synced", [])),
-        "applied": result.get("applied", []),
-        "conflicts": result.get("conflicts", []),
+        "synced_count": len(result.get("synced", [])),  # pages ALREADY in sync (unchanged this run)
+        "applied_count": len(applied),                   # pages changed this run
+        "applied": applied,                              # metadata only; page content omitted
+        "conflicts": result.get("conflicts", []),        # carry remote_content/local_content/diff
         "deletion_confirmations": result.get("deletion_confirmations", []),
         "errors": result.get("errors", []),
     }
@@ -190,8 +210,8 @@ def _build_reconcile_payload(root: str, include_ids: set[str] | None = None) -> 
         pid = meta.get("id")
         if include_ids is not None and (pid is None or str(pid) not in include_ids):
             continue
-        entry: dict[str, Any] = {"content": read_page(lp), "local_path": lp}
-        title = meta.get("title") or extract_title_from_page(lp)
+        title, body = _title_and_body(lp, meta)
+        entry: dict[str, Any] = {"content": body, "local_path": lp}
         if title:
             entry["title"] = title
         if pid:

@@ -134,16 +134,31 @@ def _render_inline(nodes: list[dict]) -> str:
     return "".join(_render_node(n) for n in nodes)
 
 
+def _wrap_flanking(text: str, marker: str) -> str:
+    """Wrap text in a flanking-delimiter emphasis mark, keeping any boundary whitespace
+    OUTSIDE the delimiters. CommonMark forbids whitespace immediately inside emphasis
+    delimiters, so a mark whose text node carries a leading/trailing space (Docmost's
+    tiptap parser absorbs the space between emphasis and an adjacent inline code span into
+    the mark) must render as ' **x** ', never '** x **'. A whitespace-only run is left bare
+    so we never emit empty emphasis."""
+    core = text.strip()
+    if not core:
+        return text
+    lead = text[: len(text) - len(text.lstrip())]
+    trail = text[len(text.rstrip()) :]
+    return f"{lead}{marker}{core}{marker}{trail}"
+
+
 def _apply_marks(text: str, marks: list[dict]) -> str:
     for mark in reversed(marks):
         mark_type = mark.get("type", "")
         mark_attrs = mark.get("attrs") or {}
         if mark_type == "bold":
-            text = f"**{text}**"
+            text = _wrap_flanking(text, "**")
         elif mark_type == "italic":
-            text = f"*{text}*"
+            text = _wrap_flanking(text, "*")
         elif mark_type == "strike":
-            text = f"~~{text}~~"
+            text = _wrap_flanking(text, "~~")
         elif mark_type == "code":
             text = f"`{text}`"
         elif mark_type == "underline":

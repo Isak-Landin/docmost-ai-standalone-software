@@ -65,6 +65,23 @@ def extract_title_from_page(local_path: str) -> str | None:
         return None
 
 
+def split_leading_h1(text: str) -> tuple[str | None, str]:
+    """If the body starts (after optional blank lines) with a level-1 '# ' heading, return
+    (title, body_without_that_heading). Otherwise (None, text). Lets a new local-only page be
+    authored as '# Title\\n\\nbody' while the title is lifted into the page title field and the
+    heading is removed from the body, so Docmost does not render the title plus a duplicate H1."""
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines) and lines[i].strip() == "":
+        i += 1
+    if i < len(lines) and lines[i].lstrip().startswith("# "):
+        title = lines[i].lstrip()[2:].strip()
+        if title:
+            rest = lines[:i] + lines[i + 1:]
+            return title, "\n".join(rest).lstrip("\n")
+    return None, text
+
+
 def update_meta_after_pull(local_path: str, page: dict[str, Any]) -> None:
     meta = read_meta(local_path)
     if page.get("page_id"):

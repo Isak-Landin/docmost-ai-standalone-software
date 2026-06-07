@@ -162,24 +162,29 @@ def sync_space(space_id: str, local_root: Optional[str] = None) -> dict:
     """Full bidirectional reconcile for a whole space in one pass. Pass ONLY the space id.
     The helper does everything automatically: pushes local edits, creates local-only pages,
     pulls remote changes, materializes new remote pages, applies moves/re-parents, and keeps
-    local + remote versions aligned. Returns synced_count plus only the items needing YOUR
-    decision: `conflicts` (each with remote_content, local_content, diff) and
-    `deletion_confirmations`. For a conflict call resolve_conflict; for a deletion call
-    confirm_deletion. If a resolution or deletion is unclear, ask the user. Never force."""
+    local + remote versions aligned. Returns a compact summary: synced_count (pages ALREADY
+    in sync this run), applied_count + applied[] (pages changed this run - METADATA ONLY; page
+    content is omitted and written straight to the local replica so a clean sync never floods
+    your context), and only the items needing YOUR decision: conflicts[] (each with
+    remote_content, local_content, diff) and deletion_confirmations[]. To confirm a change
+    happened check applied_count / errors[], NOT synced_count. For a conflict call
+    resolve_conflict; for a deletion call confirm_deletion. If unclear, ask the user. Never force."""
     return sync.sync_space(UUID(space_id), local_root=local_root)
 
 
 @mcp.tool()
 def sync_page(space_id: str, page_id: str, local_root: Optional[str] = None) -> dict:
     """Reconcile a single page by id (same automated full-fidelity reconcile as sync_space,
-    scoped to one page). Returns synced_count, applied, conflicts, deletion_confirmations."""
+    scoped to one page). Returns synced_count (already in sync) + applied_count/applied[]
+    (changed this run; metadata only, no page content) + conflicts/deletion_confirmations/errors."""
     return sync.sync_page(UUID(space_id), UUID(page_id), local_root=local_root)
 
 
 @mcp.tool()
 def sync_page_tree(space_id: str, parent_page_id: str, local_root: Optional[str] = None) -> dict:
     """Reconcile a page subtree by parent id (the parent plus all descendants), full-fidelity
-    and automated. Returns synced_count, applied, conflicts, deletion_confirmations."""
+    and automated. Returns synced_count (already in sync) + applied_count/applied[] (changed
+    this run; metadata only, no page content) + conflicts/deletion_confirmations/errors."""
     return sync.sync_page_tree(UUID(space_id), UUID(parent_page_id), local_root=local_root)
 
 
