@@ -3,10 +3,9 @@
   "title": "Data Models",
   "slug_id": "9lkVbvfzOB",
   "parent_page_id": null,
-  "parent_local_dir_path": null,
   "space_id": "019d682b-1af2-7333-aab6-2ebcbeb55cff",
   "position": "a02jp",
-  "base_revision_hash": "e41d63b0b7160a8d8c64d260483ae4aab9b2f2a2b489846f03de9e23cea3aafb",
+  "base_revision_hash": "eef49bcc375763c52db411306f888ac1750e7f7daa2e088697d0910d8acfeb73",
   "content_file_path": "Docmost-mcp-crud/Data-Models/page.md",
   "meta_file_path": "Docmost-mcp-crud/Data-Models/_meta.json"
 }

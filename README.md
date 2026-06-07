@@ -1,372 +1,166 @@
 # Docmost MCP
 
-Docmost MCP is a bridge between a live Docmost deployment and an MCP-consuming model
-(Claude Code). It reads Docmost content directly from Docmost's PostgreSQL database, writes
-through Docmost's REST API, and keeps its own separate "bridge" PostgreSQL database for
-version and sync state. On top of that it exposes a REST API, a set of helper-facing routes,
-and an operator MCP endpoint.
+Docmost MCP lets an AI model running in **Claude Code** read and maintain a project's
+**Docmost** documentation through a single MCP tool surface. The model never touches Docmost
+directly: it edits a local copy of the pages and a helper syncs that copy to Docmost with
+versioning, hierarchy tracking, and conflict handling.
+
+In short, it solves **MCP consumption of Docmost for Claude Code models** - turning a Docmost
+space into something a model can safely read from and write to.
+
+## When and why to use it
+
+Use it on any Claude Code project whose long-term documentation lives (or should live) in
+Docmost. It lets the model treat Docmost as the project's documentation source - reading
+existing docs and writing new ones - safely and reproducibly:
+
+- The model works on local markdown files and calls one sync tool; it never makes raw writes
+  to Docmost.
+- Every change is versioned and reconciled, so concurrent edits surface as conflicts instead
+  of silently overwriting.
+- One running server can back many projects; each project syncs its own space.
+
+If a project keeps its documentation only in the repo or elsewhere, you do not need this.
+
+## Server and helper
 
 The system has two halves:
 
-- **Server** (this repo) - runs as containers next to a live Docmost stack. It owns Docmost
-  connectivity, bridge version truth, content normalization, the reconcile brain, the REST and
-  helper-facing routes, and a background observer worker.
-- **Helper** (`helper/`) - a small client-side stdio MCP. It is the consuming model's ONLY
-  Docmost surface. It owns all local replica file IO and runs the automated reconcile by
-  calling the server over REST.
-
-## Two consumer surfaces (read this first)
-
-There are two MCP-shaped surfaces, and they are not interchangeable:
-
-| Surface | Who uses it | Transport | Role |
-|---|---|---|---|
-| **docmost-helper** | the model (Claude Code) | stdio | The model's only Docmost surface. Reconcile-first reads, writes, and sync. |
-| **`/mcp`** | a human operator | streamable HTTP | Quiet inspection / emergency override only. NOT the model's workflow surface. |
-
-The helper reaches the server over REST (`/v1`, `/helper/v1`, `/auto-mcp`) - never over `/mcp`.
-Do not register the operator `/mcp` HTTP MCP for the model. The model talks to `docmost-helper`,
-which talks to the server. See `helper/README.md` for helper registration.
-
-## Architecture
+- **Server** - runs as containers next to a live Docmost stack. It owns Docmost access and the
+  version state, and exposes the REST endpoints the helper calls. It also runs a background
+  worker that keeps version state current even for edits made directly in the Docmost UI.
+- **Helper** (`helper/`) - a small client-side stdio MCP. It is the model's only Docmost
+  surface. It owns the local copy of the pages (the "replica") and runs the sync.
 
 ```
-  Claude Code (model)
-        |
-        |  stdio (mcp__docmost-helper__*)
-        v
-  docmost-helper  (helper/server.py)            <-- the model's surface; owns local replica IO
-        |
-        |  REST  /v1  /helper/v1  /auto-mcp
-        v
-  +-----------------------------------------------------------+
-  |  docmost-mcp container  (FastAPI, app/main.py)            |
-  |    REST reads            -> app/query/*                   |
-  |    bridge writes         -> app/bridge/services/*         |
-  |    helper CRUD + reconcile -> app/helper_api, app/reconcile|
-  |    batch + observe       -> app/auto_mcp                  |
-  |    legacy client sync    -> app/sync                      |
-  |    operator /mcp         -> app/mcp_server                |
-  +----------+---------------------------+--------------------+
-             | psycopg2 (read)           | bridge state (psycopg2)
-             v                           v
-     Docmost PostgreSQL          bridge PostgreSQL (bridge-db)
-             ^
-             | Docmost REST API (writes: create / update / move / delete)
-             |
-  docmost-mcp-worker  (app/observer/worker.py)  <-- interval observer over ALL spaces
+Claude Code (model)  --stdio-->  docmost-helper  --REST-->  server  -->  Docmost
 ```
 
-### Containers (`docker-compose.yml`)
+The server keeps its own database for version/sync state, separate from Docmost's database; it
+never alters Docmost's schema. Full architecture, data model, and component reference live in
+the Docmost documentation space (see "Deep documentation" below).
 
-| Service | Container | Purpose |
-|---|---|---|
-| `bridge-db` | `docmost-mcp-bridge-db` | PostgreSQL 16 holding bridge-owned version state |
-| `docmost-mcp` | `docmost-mcp` | FastAPI app: REST + helper routes + operator `/mcp` |
-| `docmost-mcp-worker` | `docmost-mcp-worker` | `app.observer.worker --loop`: folds direct-Docmost-UI edits into bridge state every `WORKER_INTERVAL_SECONDS` (default 15s) over every space |
+## Endpoints
 
-### Two databases
+The helper talks to the server over REST; you do not call these yourself, but for reference:
 
-- **Docmost PostgreSQL** - the live Docmost database. The bridge reads pages and spaces from
-  it directly (`app/query/docmost.py`) and writes through Docmost's REST API
-  (`app/write/docmost.py`). The bridge never alters the Docmost schema.
-- **Bridge PostgreSQL** (`bridge-db`) - bridge-owned state: page heads, version history, write
-  intents/receipts, observer checkpoints, and local-page snapshots. Schema is applied from
-  `migrations/bridge/*.sql` on first use (`app/bridge/db/schema.py`).
+- **Reads** - spaces, page tree, pages, and page content (`/v1`, `/helper/v1`, and `/spaces`).
+- **Writes** - create / update / move / delete page, create / delete space (`/v1`, `/spaces`).
+- **Sync** - reconcile a scope, resolve a conflict, confirm a deletion
+  (`/v1/spaces/{id}/reconcile`, `/resolve`, `/confirm-deletion`).
+- **Automation** - batch apply and a one-shot observer pass (`/auto-mcp`).
+- **Health / version** - liveness and the helper/server version handshake (`/health`,
+  `/v1/contract`).
+- **Operator MCP** - `/mcp` (streamable HTTP) for manual inspection only; it is not the model's
+  surface and must not be registered for the model.
 
-### Module map
-
-| Path | Responsibility |
-|---|---|
-| `app/main.py` | FastAPI app factory, router registration, `/mcp` mount, MCP session lifespan |
-| `app/query/docmost.py` | Direct Docmost DB reads (spaces, pages, tree); ProseMirror -> markdown render |
-| `app/query/prosemirror.py` | Deterministic ProseMirror-JSON to markdown renderer (strips volatile node ids) |
-| `app/query/db.py` | Docmost DB connection / DSN, `DocmostConnectionError` |
-| `app/query/replica.py` | Server-side replica structure/standards (operator + `/sync` routes) |
-| `app/query/routers/` | REST read routes: health, spaces, pages, replica |
-| `app/write/docmost.py` | Docmost REST write client (create/update/move/delete page, create/delete space) |
-| `app/write/routers/` | Direct REST write routes (`crud` caller mode) |
-| `app/bridge/db/` | Bridge DB connection + schema bootstrap |
-| `app/bridge/repositories/` | Bridge tables: page_heads, page_versions, write_intents, write_receipts, observer_checkpoints, snapshots |
-| `app/bridge/services/write_pipeline.py` | All bridge writes: intents/receipts, canonical finalize, compensating rollback |
-| `app/bridge/services/canonical.py` | The single revision-hash derivation point (Docmost read-back) |
-| `app/bridge/services/versioning.py` | `revision_hash`, head-alignment checks, snapshots |
-| `app/bridge/services/observer.py` | Folds external/manual Docmost edits into bridge state |
-| `app/bridge/services/bootstrap.py` | `ensure_space_bootstrapped` - backfills existing spaces |
-| `app/reconcile/` | The reconcile brain: three-way classification + `/reconcile`, `/resolve`, `/confirm-deletion` |
-| `app/helper_api/` | Helper-facing CRUD + snapshot routes (`/v1`, `/helper/v1`) |
-| `app/auto_mcp/` | Batch apply + observe routes (`/auto-mcp`) |
-| `app/sync/` | Legacy client-state sync routes (`/spaces/{id}/sync/*`) |
-| `app/contract.py` | `/v1/contract` version handshake, `/v1/health` |
-| `app/observer/worker.py` | Interval observer loop over all spaces |
-| `app/mcp_server.py` | Operator `/mcp` FastMCP surface + operator-only instructions |
-| `migrations/bridge/*.sql` | Bridge database schema |
-| `helper/server.py` | Helper stdio MCP tool definitions (the model's surface) |
-| `helper/helper/client.py` | REST client to the server |
-| `helper/helper/sync.py` | Helper reconcile pipeline + low-level escape hatches |
-| `helper/helper/replica.py` | Local replica file IO, `_replica.json` discovery by space id |
-
-## The bridge version model
-
-Every page the bridge knows about has a **head** (`page_heads`) carrying a
-`current_revision_hash`, plus an append-only `page_versions` history. The revision hash is:
-
-```
-revision_hash = sha256( canonical_title + "\n---\n" + canonical_content )
-```
-
-It is **bridge-internal** - it is never stored in Docmost. It is derived at exactly one place,
-`app/bridge/services/canonical.py`, always from Docmost's stored content read back and rendered
-to markdown (ProseMirror -> markdown, with volatile node ids stripped). Because every surface
-(helper push, direct CRUD, the worker/observer, and direct Docmost-UI edits) ends up as the same
-stored Docmost content and is hashed the same way, a write-origin head and an observe-origin head
-for the same content are identical. There is no input-vs-rendered drift.
-
-Writes go through `app/bridge/services/write_pipeline.py` in one of three caller modes:
-
-- `helper` / `auto_sync` - require head alignment (an expected base revision hash) so a stale
-  client cannot clobber a newer head.
-- `crud` - no alignment requirement; used by the direct `/spaces/*` REST write routes.
-
-The **worker** (`docmost-mcp-worker`) runs `observe_space` over every space on an interval. It
-confirms pending bridge writes and records any change made outside the bridge (for example a
-manual edit in the Docmost UI) as a new version with source `external_observer`. This means the
-bridge tracks versions for all spaces whether or not a model has ever touched them, and a space
-that already has content is backfilled on first contact.
-
-## Normal workflow: reconcile
-
-The model only initiates a sync; the helper plus the server reconcile brain do all versioning,
-diffing, and file IO.
-
-1. Edit `page.md` locally and/or restructure the replica (move a page directory to re-parent).
-2. Call `sync_space(space_id)` (or `sync_page` / `sync_page_tree`) on `docmost-helper` with only
-   the id(s).
-3. The helper builds the local page set plus the last-synced `_tree.json`, calls
-   `POST /v1/spaces/{id}/reconcile`, and applies the result locally: pushes local edits, creates
-   local-only pages, pulls remote changes, materializes new remote pages, applies moves/re-parents,
-   and aligns both the bridge head and the local `_meta.json` base revision hash.
-4. The result returns `synced_count` plus `applied`, and only the items needing a decision:
-   `conflicts` (each with `remote_content`, `local_content`, diff) and `deletion_confirmations`.
-   - Conflict: inspect, then `resolve_conflict(space_id, page_id, merged_content)` (pushed aligned
-     to the current remote head, no force).
-   - Deletion: `confirm_deletion(space_id, page_id, direction)` (`remote` soft-deletes the remote
-     page and drops the local copy; `local` accepts a remote deletion).
-
-A clean sync needs no force and surfaces no conflicts. Classification is three-way (local vs
-last-synced tree vs bridge head) across content, structure (parent/position/icon), and existence.
-
-## Local replica (helper-owned)
-
-The replica is a local directory tree the helper maintains; Docmost remains the long-term source
-of truth. Each page is a directory containing:
-
-- `page.md` - markdown content (owned by the helper and the model; edit locally, push via helper)
-- `_meta.json` - page identity + sync base (owned by the helper; do not edit by hand)
-
-The replica root also holds `_replica.json` (space header: `space_id`, `slug`, `name`) and
-`_tree.json` (the last-synced tree snapshot). The helper resolves which replica to use by
-scanning for a `_replica.json` whose `space_id` matches, under `DOCMOST_REPLICA_BASE` (default:
-the helper's current working directory). Pass an explicit `local_root` to override.
-
-In this repository the tracked replica of the service's own documentation space lives at
-`Docmost-mcp-crud/`.
-
-## REST surface
-
-The REST API and helper-facing routes are served by FastAPI. The `/mcp` endpoint is the operator
-surface only.
-
-### Read routes (direct Docmost DB)
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/health` | process liveness only (does not check the database) |
-| `GET` | `/spaces` | list non-deleted spaces |
-| `GET` | `/spaces/{space_id}` | get one space |
-| `GET` | `/spaces/{space_id}/tree` | nested page tree |
-| `GET` | `/spaces/{space_id}/pages` | flat page list |
-| `GET` | `/spaces/{space_id}/pages/{page_id}` | one page with markdown content |
-| `GET` | `/spaces/{space_id}/replica-structure` | server-side replica layout for a space |
-| `GET` | `/replica/standards` | replica naming/structure/sync rules |
-| `GET` | `/replica/resolve-directory-name` | resolve a local directory name for a title |
-
-### Direct write routes (bridge pipeline, `crud` mode)
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/spaces` | create a space |
-| `DELETE` | `/spaces/{space_id}` | permanently delete a space and its pages |
-| `POST` | `/spaces/{space_id}/pages` | create a page (add `parent_page_id` for a child) |
-| `PUT` | `/spaces/{space_id}/pages/{page_id}` | update title and/or content (`replace`/`append`/`prepend`) |
-| `DELETE` | `/spaces/{space_id}/pages/{page_id}` | soft-delete a page |
-
-### Helper-facing routes (served under both `/v1` and `/helper/v1`)
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/v1/contract` | helper <-> server contract version + capabilities |
-| `GET` | `/v1/health` | process health |
-| `GET` | `/v1/spaces`, `/v1/spaces/{id}`, `/v1/spaces/{id}/tree` | reads |
-| `GET` | `/v1/spaces/{id}/pages`, `/v1/spaces/{id}/pages/{pid}` | reads (page carries `current_revision_hash`) |
-| `POST`/`DELETE` | `/v1/spaces`, `/v1/spaces/{id}` | create / delete space (`helper` mode) |
-| `POST`/`PUT`/`DELETE` | `/v1/spaces/{id}/pages[...]` | create / update / delete page (`helper` mode) |
-| `POST` | `/v1/spaces/{id}/pages/{pid}/move` | move / re-parent a page (id-preserving) |
-| `POST`/`GET`/`DELETE` | `/v1/spaces/{id}/pages/{pid}/snapshots[...]` | local-page snapshots (stash) |
-| `POST` | `/v1/spaces/{space_id}/reconcile` | classify + apply a scoped bidirectional reconcile (four buckets) |
-| `POST` | `/v1/spaces/{id}/pages/{pid}/resolve` | resolve a conflict aligned to the current remote head |
-| `POST` | `/v1/spaces/{id}/pages/{pid}/confirm-deletion` | apply a confirmed deletion (`remote`/`local`) |
-
-### Automation + legacy sync routes
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/auto-mcp/spaces/{space_id}/pages/apply` | batch create/update through the bridge pipeline |
-| `POST` | `/auto-mcp/spaces/{space_id}/observe` | run one observer pass for a space |
-| `POST` | `/spaces/{space_id}/sync/status` | client-state sync status |
-| `POST` | `/spaces/{space_id}/sync/diff` | client-state diff hunks |
-| `POST` | `/spaces/{space_id}/sync/local-pages` | plan a new local-only page |
-| `POST` | `/spaces/{space_id}/sync/pull` | pull remote into a client working copy |
-| `POST` | `/spaces/{space_id}/sync/push` | push a client working copy to remote |
-
-All page content is markdown in and markdown out. The page title is a separate parameter - never
-an H1 in the body. Use plain ASCII punctuation.
+Interactive API docs are served at `/docs`. The full request/response contracts are in the
+Docmost documentation, not here.
 
 ## Prerequisites
 
-- A running Docmost environment with PostgreSQL. **Docmost v0.71.1 or later is required** for
-  content write operations (older versions silently discard the `content` field).
-- Docker and Docker Compose on the server that hosts Docmost.
-- Network access from this service to the live Docmost PostgreSQL container.
-- A separate PostgreSQL database for bridge-owned state (provided by the `bridge-db` service).
-
-> **Checking your Docmost version**
->
-> ```bash
-> docker exec docmost cat /app/apps/server/package.json | grep '"version"' | head -1
-> ```
->
-> Docmost upgrades are non-destructive (data lives in PostgreSQL):
->
-> ```bash
-> docker compose pull docmost && docker compose up -d docmost
-> ```
+- A running Docmost with PostgreSQL. **Docmost v0.71.1 or later is required** for content writes
+  (earlier versions silently discard page content).
+- Docker and Docker Compose on the Docmost host.
+- Network reach from this service to the Docmost database, and a separate PostgreSQL database
+  for the server's own version state (provided by the bundled `bridge-db` service).
 
 ## Server setup
 
-The server runs as three containers joined to the same external Docker network as Docmost.
+The server runs as three containers (`bridge-db`, `docmost-mcp`, `docmost-mcp-worker`) on the
+same Docker network as Docmost.
 
-### 1. Place the project on the Docmost host
+1. Put the project on the Docmost host and copy the env file:
 
-```bash
-git clone <repo-url> /opt/docmost-mcp && cd /opt/docmost-mcp
-```
+   ```bash
+   git clone <repo-url> /opt/docmost-mcp && cd /opt/docmost-mcp
+   cp env.example .env
+   ```
 
-### 2. Confirm the shared Docker network
+2. Fill in `.env`:
 
-This project joins the external network named by `DOCMOST_NETWORK_NAME` (default
-`docmost_default`). Find your Docmost network:
+   ```env
+   # Docmost database (read path) - DOCMOST_DB_URL or the individual values
+   DOCMOST_DB_URL=postgresql://docmost:STRONG_DB_PASSWORD@db:5432/docmost
+   DOCMOST_DB_HOST=db
+   DOCMOST_DB_PORT=5432
+   DOCMOST_DB_NAME=docmost
+   DOCMOST_DB_USER=docmost
+   DOCMOST_DB_PASSWORD=STRONG_DB_PASSWORD
 
-```bash
-docker network ls | grep docmost
-```
+   # Server version-state database (the bridge-db service)
+   BRIDGE_DB_URL=postgresql://docmost_bridge:STRONG_BRIDGE_DB_PASSWORD@bridge-db:5432/docmost_bridge
+   BRIDGE_DB_HOST=bridge-db
+   BRIDGE_DB_PORT=5432
+   BRIDGE_DB_NAME=docmost_bridge
+   BRIDGE_DB_USER=docmost_bridge
+   BRIDGE_DB_PASSWORD=STRONG_BRIDGE_DB_PASSWORD
 
-### 3. Create `.env`
+   # Docmost app (write path) - token kept in memory only
+   DOCMOST_APP_URL=http://docmost:3000
+   DOCMOST_USER_EMAIL=<docmost-user-email>
+   DOCMOST_USER_PASSWORD=<docmost-user-password>
 
-```bash
-cp env.example .env
-```
+   # Shared Docker network with the Docmost stack
+   DOCMOST_NETWORK_NAME=docmost_default
 
-Fill in the values:
+   # Bind + exposure
+   LISTEN_HOST=0.0.0.0
+   LISTEN_PORT=8099
+   EXTERNAL_PORT=8099
 
-```env
-# Docmost database (read path). Use DOCMOST_DB_URL or the individual values.
-DOCMOST_DB_URL=postgresql://docmost:STRONG_DB_PASSWORD@db:5432/docmost
-DOCMOST_DB_HOST=db
-DOCMOST_DB_PORT=5432
-DOCMOST_DB_NAME=docmost
-DOCMOST_DB_USER=docmost
-DOCMOST_DB_PASSWORD=STRONG_DB_PASSWORD
+   # Host headers the /mcp transport accepts (your reverse-proxy domain);
+   # leave empty to disable DNS-rebinding protection (not for production)
+   MCP_ALLOWED_HOSTS=mcp.yourdomain.com
 
-# Bridge-owned state database (the bridge-db service)
-BRIDGE_DB_URL=postgresql://docmost_bridge:STRONG_BRIDGE_DB_PASSWORD@bridge-db:5432/docmost_bridge
-BRIDGE_DB_HOST=bridge-db
-BRIDGE_DB_PORT=5432
-BRIDGE_DB_NAME=docmost_bridge
-BRIDGE_DB_USER=docmost_bridge
-BRIDGE_DB_PASSWORD=STRONG_BRIDGE_DB_PASSWORD
+   # Observer interval, logging
+   WORKER_INTERVAL_SECONDS=15
+   MODE=prod
+   LOG_LEVEL=INFO
+   ```
 
-# Docmost application (write path). Token is held in memory only.
-DOCMOST_APP_URL=http://docmost:3000
-DOCMOST_USER_EMAIL=<docmost-user-email>
-DOCMOST_USER_PASSWORD=<docmost-user-password>
+3. Start and verify:
 
-# Docker network shared with the Docmost stack
-DOCMOST_NETWORK_NAME=docmost_default
+   ```bash
+   docker compose up -d --build
+   docker compose ps
+   curl http://<host>:8099/health      # {"ok": true} (process only)
+   curl http://<host>:8099/spaces      # 200 with spaces, or 503 if the DB is unreachable
+   ```
 
-# Bind + exposure
-LISTEN_HOST=0.0.0.0
-LISTEN_PORT=8099
-EXTERNAL_PORT=8099
+Behind a reverse proxy, terminate TLS, forward `/mcp` and the REST routes to the container, and
+set `MCP_ALLOWED_HOSTS` to the proxied domain.
 
-# MCP transport: Host headers the /mcp transport accepts (reverse proxy domain).
-# Leave empty to disable DNS-rebinding protection (not recommended for production).
-MCP_ALLOWED_HOSTS=mcp.yourdomain.com
+## Helper setup (Claude Code)
 
-# Worker observe interval (seconds)
-WORKER_INTERVAL_SECONDS=15
+The helper is **not plug-and-play**: it runs from source in its own virtualenv and is wired into
+Claude Code by absolute path. Do all of the following on the machine where Claude Code runs.
 
-MODE=prod
-LOG_LEVEL=INFO
-```
-
-### 4. Build and start
-
-```bash
-docker compose up -d --build
-```
-
-This builds and starts `bridge-db`, `docmost-mcp`, and `docmost-mcp-worker`, attaches them to the
-external Docmost network, and publishes the API on `EXTERNAL_PORT`.
-
-### 5. Verify
-
-```bash
-docker compose ps
-curl http://<host>:8099/health          # -> {"ok": true}  (process only)
-curl http://<host>:8099/spaces          # -> 200 with spaces, or 503 if the DB is unreachable
-```
-
-- REST docs: `http://<host>:8099/docs`
-- Operator MCP endpoint: `http://<host>:8099/mcp` (or `https://<host>/mcp` behind a proxy)
-
-If the Docmost database is unreachable, read routes return `503` with
-`{"detail":"Docmost database connection failed"}`.
-
-### Behind a reverse proxy
-
-Terminate TLS, expose a stable hostname, and forward `/mcp` plus the REST routes to the
-container. Set `MCP_ALLOWED_HOSTS` to the proxied domain.
-
-## Helper setup (the model's surface)
-
-The helper runs on the machine where Claude Code runs. It does not host the bridge; it connects
-to the already-running server and manages the local replica.
+### 1. Create the helper virtualenv and configure it
 
 ```bash
 cd helper
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.example .env
-# Set DOCMOST_MCP_SERVER_URL in helper/.env to the running server base URL.
-# Optionally set DOCMOST_REPLICA_BASE to the directory that holds your replica(s).
 ```
 
-Register `docmost-helper` as a **stdio** MCP in exactly one Claude Code scope:
+Edit `helper/.env`:
 
-- **User / home scope** (`$CLAUDE_CONFIG_DIR/.claude.json`, falling back to `~/.claude.json`):
-  loads in every session. This is how the live environment is set up.
-- **Project scope** (`.mcp.json` at a repo root): loads only in that directory.
+```env
+# Required: base URL of the running server. The helper does a version handshake on start,
+# so this must be set before the helper launches.
+DOCMOST_MCP_SERVER_URL=https://your-server-host        # or http://host:8099
+
+# Optional: directory under which the helper finds replicas by space id. If unset, the helper
+# looks under its current working directory (normally the project root Claude Code launched it in).
+DOCMOST_REPLICA_BASE=
+```
+
+### 2. Register the helper as a stdio MCP (absolute paths to THIS venv)
+
+Claude Code launches the helper as a subprocess, so the entry must point at the venv's python and
+`server.py` by **absolute path** - not `python` on PATH, not a relative path:
 
 ```json
 {
@@ -380,48 +174,68 @@ Register `docmost-helper` as a **stdio** MCP in exactly one Claude Code scope:
 }
 ```
 
-Keep the scopes disjoint (do not register the same MCP in both home and project). **Do not
-register the operator `/mcp` HTTP MCP for the model** - the model uses `docmost-helper` only. The
-included `claude.json.example` shows the correct helper-stdio registration. See `helper/README.md`
-for the full helper reference.
+Put it in exactly **one** scope:
 
-## Data model
+- **User / home scope** - `$CLAUDE_CONFIG_DIR/.claude.json` (falls back to `~/.claude.json`).
+  Loads in every Claude Code session regardless of directory. Recommended when one helper serves
+  many projects.
+- **Project scope** - `.mcp.json` at a repo root. Loads only when Claude Code runs in that repo.
 
-### Docmost (read directly; never altered by the bridge)
+Register in one scope only - the same server in both scopes double-lists its tools. Do **not**
+register the operator `/mcp` HTTP MCP for the model; the model uses `docmost-helper` only.
+`claude.json.example` in this repo is a ready-to-copy entry.
 
-- `spaces`: `id, name, description, slug, visibility, default_role, creator_id, workspace_id, created_at, updated_at`
-- `pages`: `id, slug_id, title, icon, position, parent_page_id, creator_id, last_updated_by_id, space_id, workspace_id, is_locked, content, created_at, updated_at` (rows with `deleted_at IS NULL`)
+### 3. Give the model instructions (`CLAUDE.md`)
 
-### Bridge (owned by this service; `migrations/bridge/*.sql`)
+Registering the helper exposes the tools; the model still needs short instructions telling it how
+and when to use them. Put these in the consuming project's `CLAUDE.md` (this repo's `CLAUDE.md` is
+a ready-to-copy template). Nothing is forced - include what fits the project - but a complete set
+covers:
 
-| Table | Purpose |
-|---|---|
-| `page_versions` | append-only version history (`revision_hash`, title, content, structural fields, `source`) |
-| `page_heads` | current head per page (`current_revision_hash`, content, parent, position, icon, `is_deleted`) |
-| `write_intents` | every attempted bridge write (action, caller_mode, status, target hash) |
-| `write_receipts` | pending write confirmations matched by the observer |
-| `observer_checkpoints` | last seen Docmost `updated_at` + observed hash per page |
-| `local_page_snapshots` | helper stash snapshots for conflict resolution |
+- **Surface:** the helper is the only Docmost surface; use it for all Docmost reads, writes, and
+  sync (never the operator `/mcp`).
+- **Local replica:** edit `page.md` files; move page directories to restructure; never edit
+  `_meta.json` (helper-managed).
+- **Workflow:** call `sync_space` / `sync_page` / `sync_page_tree` with an id; act on the
+  `conflicts` / `deletion_confirmations` the result returns (`resolve_conflict` /
+  `confirm_deletion`); ask the user when unclear.
+- **Content rules:** markdown only; the page title is a separate field (a leading `# H1` on a new
+  page is lifted into the title); plain ASCII punctuation.
+- **IDs:** always from live tool responses, never from memory.
+- **When to use Docmost:** treat it as the project's long-term documentation source and route
+  documentation reads/writes through the helper. This "when to use Docmost" decision is
+  project-specific and is deliberately different from how a generic, always-on tool is described -
+  decide per project whether documentation belongs in Docmost.
 
-## Updating the running service
+### Local-environment checklist (none of this is plug-and-play)
+
+- [ ] `helper/.venv` created and `requirements.txt` installed into it
+- [ ] `helper/.env` filled, with `DOCMOST_MCP_SERVER_URL` set before first launch
+- [ ] the MCP entry uses **absolute** paths to `helper/.venv/bin/python` and `helper/server.py`
+- [ ] registered in exactly one Claude Code scope; the operator `/mcp` is not registered for the model
+- [ ] `CLAUDE.md` instructions present in the consuming project
+- [ ] `DOCMOST_REPLICA_BASE` set only if replicas live outside the project root
+
+## Using it
+
+1. Edit `page.md` locally and/or move page directories to restructure the hierarchy.
+2. Call `sync_space(space_id)` (or `sync_page` / `sync_page_tree`) with only the id.
+3. The helper syncs both ways and returns a short summary plus any conflicts or deletions that
+   need a decision; resolve those with `resolve_conflict` / `confirm_deletion`.
+
+## Updating and troubleshooting
 
 ```bash
-docker compose up -d --build     # rebuild after code/dependency changes
+docker compose up -d --build     # after code/dependency changes
 docker compose restart           # restart without rebuilding
 docker compose logs -f docmost-mcp docmost-mcp-worker
 ```
 
-## Troubleshooting
-
-- **Health OK but reads fail** - `/health` is process-only. Check `.env` DB credentials, the
-  Docmost DB hostname on the shared network, and `DOCMOST_NETWORK_NAME`.
-- **`/mcp` "Session not found" after a restart** - streamable-HTTP sessions reset on restart;
-  open a fresh session.
-- **Page lookups fail** - resolve `space_id` first; page lookup is always space-scoped.
-- **Helper can't find a replica** - it scans `DOCMOST_REPLICA_BASE` (default: the helper's cwd)
-  for a `_replica.json` whose `space_id` matches. Pass an explicit `local_root` to override.
-- **Worker not recording manual edits** - check `docmost-mcp-worker` logs; it observes every
-  space on `WORKER_INTERVAL_SECONDS`.
+- **Health OK but reads fail** - `/health` is process-only; check the `.env` database settings
+  and `DOCMOST_NETWORK_NAME`.
+- **Page lookups fail** - always resolve a `space_id` first; lookups are space-scoped.
+- **Helper can't find a replica** - it scans `DOCMOST_REPLICA_BASE` (default: its cwd) for a
+  matching replica; pass an explicit `local_root` to override.
 
 ## Local non-Docker run
 
@@ -429,12 +243,17 @@ docker compose logs -f docmost-mcp docmost-mcp-worker
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8099
-# worker, separately:
-python -m app.observer.worker --loop
+python -m app.observer.worker --loop   # worker, separately
 ```
 
-You still need valid Docmost and bridge database connectivity through the env vars; a
-Docker-only hostname such as `db` will not resolve from a bare host run.
+Valid Docmost and version-state database connectivity is still required; a Docker-only hostname
+like `db` will not resolve from a bare host run.
+
+## Deep documentation
+
+Full architecture, the version/reconcile model, the data model, per-endpoint contracts, the
+helper tool reference, and deployment detail live in the **Docmost-MCP-Service** documentation
+space in Docmost. This README is intentionally limited to setup, configuration, and usage.
 
 ## License
 
