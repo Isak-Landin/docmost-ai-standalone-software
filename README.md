@@ -187,25 +187,36 @@ register the operator `/mcp` HTTP MCP for the model; the model uses `docmost-hel
 
 ### 3. Give the model instructions (`CLAUDE.md`)
 
-Registering the helper exposes the tools; the model still needs short instructions telling it how
-and when to use them. Put these in the consuming project's `CLAUDE.md` (this repo's `CLAUDE.md` is
-a ready-to-copy template). Nothing is forced - include what fits the project - but a complete set
-covers:
+Registering the helper exposes the tools; the model still needs short instructions on how to use
+them. Paste the block below into the consuming project's `CLAUDE.md` as-is - it is generic and
+applies to any project unchanged:
 
-- **Surface:** the helper is the only Docmost surface; use it for all Docmost reads, writes, and
-  sync (never the operator `/mcp`).
-- **Local replica:** edit `page.md` files; move page directories to restructure; never edit
+```md
+## Docmost (docmost-helper)
+
+Use the docmost-helper (stdio MCP) for all Docmost reads, writes, and sync. It is the only
+Docmost surface.
+
+- Local replica: edit `page.md` files; move a page's directory to re-parent it; never edit
   `_meta.json` (helper-managed).
-- **Workflow:** call `sync_space` / `sync_page` / `sync_page_tree` with an id; act on the
-  `conflicts` / `deletion_confirmations` the result returns (`resolve_conflict` /
-  `confirm_deletion`); ask the user when unclear.
-- **Content rules:** markdown only; the page title is a separate field (a leading `# H1` on a new
-  page is lifted into the title); plain ASCII punctuation.
-- **IDs:** always from live tool responses, never from memory.
-- **When to use Docmost:** treat it as the project's long-term documentation source and route
-  documentation reads/writes through the helper. This "when to use Docmost" decision is
-  project-specific and is deliberately different from how a generic, always-on tool is described -
-  decide per project whether documentation belongs in Docmost.
+- Sync: call `sync_space(space_id)` (or `sync_page(space_id, page_id)` /
+  `sync_page_tree(space_id, parent_page_id)`) with only the id. Act only on the `conflicts` and
+  `deletion_confirmations` the result returns - resolve with
+  `resolve_conflict(space_id, page_id, merged_content)` and
+  `confirm_deletion(space_id, page_id, direction)` - and ask the user when unclear. Never force.
+- IDs: every `space_id` / `page_id` / `parent_page_id` must come from a live tool response
+  (`list_spaces`, `list_pages`, `get_space_tree`), never from memory.
+- Content: markdown only; the page title is a separate field (do not start the body with a
+  `# Heading`); use plain ASCII punctuation.
+```
+
+The line below is project-specific (it decides whether documentation belongs in Docmost at all),
+so paste it only where it applies and set the project name:
+
+```md
+- When to use Docmost: treat Docmost as <project>'s long-term documentation source - route
+  documentation reads and writes through the helper.
+```
 
 ### Local-environment checklist (none of this is plug-and-play)
 
