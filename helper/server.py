@@ -30,17 +30,18 @@ except Exception as _exc:  # handshake is best-effort; the helper still starts
 mcp = FastMCP(
     "docmost-helper",
     instructions=(
-        "Client-side helper for Docmost. This stdio MCP is the model's ONLY Docmost surface — "
-        "use it for all reads, writes, and sync. Never call the server-side docmost-mcp /mcp HTTP "
-        "surface; that is an operator-only inspection fallback. The helper reaches the server over "
-        "REST (/v1, /helper/v1, /auto-mcp).\n\n"
+        "Client-side helper for Docmost and your ONLY Docmost surface - use it for all reads, "
+        "writes, and sync.\n\n"
         "Normal work is reconcile-first: edit page.md locally (and/or move page directories to "
-        "restructure), then call sync_space(space_id) — or sync_page / sync_page_tree — with only "
-        "the id. The helper diffs, versions, and applies push/create/pull/move automatically, and "
-        "returns synced_count + applied plus only the items needing a decision: conflicts and "
-        "deletion_confirmations. Resolve a conflict with resolve_conflict(space_id, page_id, "
-        "merged_content); apply a deletion with confirm_deletion(space_id, page_id, direction). Ask "
-        "the user when a merge or deletion is unclear. Never force.\n\n"
+        "restructure the hierarchy), then call sync_space(space_id) - or sync_page / sync_page_tree "
+        "- with only the id. The helper reconciles automatically (pushes your edits, creates new "
+        "pages, pulls remote changes, applies moves) and returns a summary: synced_count (already "
+        "in sync) + applied_count / applied[] (changed this run - metadata only; page content is "
+        "written to your local files, not returned) plus only the items needing a decision: "
+        "conflicts[] (with remote_content / local_content / diff) and deletion_confirmations[]. "
+        "Resolve a conflict with resolve_conflict(space_id, page_id, merged_content); apply a "
+        "deletion with confirm_deletion(space_id, page_id, direction). Ask the user when a merge or "
+        "deletion is unclear. Never force.\n\n"
         "create_page / update_page / delete_page / move_page / push_pages / pull_pages / "
         "accept_remote and the stash tools are low-level escape hatches, not the normal path. "
         "Content is markdown; the page title is a separate parameter (never an H1 in the body); "
@@ -79,7 +80,7 @@ def list_pages(space_id: str) -> list[dict]:
 
 @mcp.tool()
 def get_page(space_id: str, page_id: str) -> dict:
-    """Get a single page with markdown content and current revision hash."""
+    """Get a single page with its markdown content."""
     return client.get_page(UUID(space_id), UUID(page_id))
 
 
@@ -162,7 +163,7 @@ def sync_space(space_id: str, local_root: Optional[str] = None) -> dict:
     """Full bidirectional reconcile for a whole space in one pass. Pass ONLY the space id.
     The helper does everything automatically: pushes local edits, creates local-only pages,
     pulls remote changes, materializes new remote pages, applies moves/re-parents, and keeps
-    local + remote versions aligned. Returns a compact summary: synced_count (pages ALREADY
+    local and remote in sync. Returns a compact summary: synced_count (pages ALREADY
     in sync this run), applied_count + applied[] (pages changed this run - METADATA ONLY; page
     content is omitted and written straight to the local replica so a clean sync never floods
     your context), and only the items needing YOUR decision: conflicts[] (each with
@@ -190,9 +191,8 @@ def sync_page_tree(space_id: str, parent_page_id: str, local_root: Optional[str]
 
 @mcp.tool()
 def resolve_conflict(space_id: str, page_id: str, merged_content: str, local_root: Optional[str] = None) -> dict:
-    """Resolve a conflict surfaced by a sync. The server pushes your merged_content aligned to
-    the CURRENT remote head (no force), then the helper writes it locally and re-aligns the base.
-    Provide the final merged markdown; ask the user first if the right merge is unclear."""
+    """Resolve a conflict surfaced by a sync: provide the final merged markdown and the helper
+    applies it. Ask the user first if the right merge is unclear."""
     return sync.resolve_conflict(UUID(space_id), UUID(page_id), merged_content, local_root=local_root)
 
 
@@ -210,8 +210,8 @@ def push_pages(
     local_paths: list[str],
     local_root: Optional[str] = None,
 ) -> dict:
-    """Push specific local pages to Docmost via the bridge write pipeline.
-    Returns applied and drifted pages together in results[]. Check applied=False / action='drifted' for conflicts."""
+    """Push specific local pages to Docmost. Returns each page's result in results[];
+    check applied=False / action='drifted' for conflicts."""
     return sync.push_pages(UUID(space_id), local_paths=local_paths, local_root=local_root)
 
 
@@ -256,8 +256,7 @@ def accept_remote(
 
 @mcp.tool()
 def stash_page(space_id: str, page_id: str, local_path: str) -> dict:
-    """Save current local page.md as a server-side snapshot before overwriting.
-    Updates _meta.json with active_snapshot tracking for auto-expiry.
+    """Save the current local page.md as a snapshot before overwriting.
     Returns snapshot_id — hold this for the duration of conflict resolution."""
     return sync.create_stash(UUID(space_id), UUID(page_id), local_path)
 
