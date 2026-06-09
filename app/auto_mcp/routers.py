@@ -8,6 +8,7 @@ from app.bridge.errors import BridgeConflictError
 from app.bridge.services.observer import observe_space
 from app.bridge.services.write_pipeline import create_page_via_bridge, update_page_via_bridge
 from app.schemas.auto_mcp import (
+    AutoObserveIn,
     AutoObserveOut,
     AutoPageWriteBatchIn,
     AutoPageWriteBatchOut,
@@ -93,9 +94,10 @@ def apply_page_operations(space_id: UUID, body: AutoPageWriteBatchIn) -> AutoPag
     response_model=AutoObserveOut,
     summary="Run one observer pass for the selected space",
 )
-def observe_space_changes(space_id: UUID) -> AutoObserveOut:
+def observe_space_changes(space_id: UUID, body: AutoObserveIn | None = None) -> AutoObserveOut:
+    force_rerender = bool(body.force_rerender) if body else False
     try:
-        result = observe_space(space_id)
+        result = observe_space(space_id, force_rerender=force_rerender)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return AutoObserveOut(
@@ -104,4 +106,5 @@ def observe_space_changes(space_id: UUID) -> AutoObserveOut:
         bridge_writes_confirmed=result.bridge_writes_confirmed,
         external_updates_recorded=result.external_updates_recorded,
         external_deletions_recorded=result.external_deletions_recorded,
+        reanchored_count=result.reanchored_count,
     )

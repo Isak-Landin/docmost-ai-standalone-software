@@ -174,6 +174,22 @@ def sync_space(space_id: str, local_root: Optional[str] = None) -> dict:
 
 
 @mcp.tool()
+def resync_space(space_id: str, local_root: Optional[str] = None) -> dict:
+    """Re-anchor and reconcile a whole space when you need EVERY page brought into sync, whether
+    or not it changed - e.g. after the server's markdown renderer was corrected, so pages that
+    were never re-edited still show the fixed rendering. It re-renders every page from Docmost on
+    the server, then runs the same two-way reconcile as sync_space: a page whose only difference
+    is the corrected render heals automatically as a pull (no content returned to you); a page
+    that also has un-pushed local edits surfaces as a conflict[] for YOUR decision. It never
+    force-pushes, so it cannot overwrite or corrupt either side. Returns the normal summary
+    (synced_count + applied_count/applied[] metadata-only + conflicts/deletion_confirmations/
+    errors) plus reanchored_count (pages whose server render changed this run). Resolve conflicts
+    with resolve_conflict; ask the user if a merge is unclear. Prefer plain sync_space for normal
+    day-to-day work."""
+    return sync.resync_space(UUID(space_id), local_root=local_root)
+
+
+@mcp.tool()
 def sync_page(space_id: str, page_id: str, local_root: Optional[str] = None) -> dict:
     """Reconcile a single page by id (same automated full-fidelity reconcile as sync_space,
     scoped to one page). Returns synced_count (already in sync) + applied_count/applied[]

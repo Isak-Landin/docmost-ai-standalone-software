@@ -148,8 +148,8 @@ def batch_apply(space_id: UUID, pages: list[dict]) -> dict:
     return _post(f"/auto-mcp/spaces/{space_id}/pages/apply", {"pages": pages})
 
 
-def observe(space_id: UUID) -> dict:
-    return _post(f"/auto-mcp/spaces/{space_id}/observe", {})
+def observe(space_id: UUID, force_rerender: bool = False) -> dict:
+    return _post(f"/auto-mcp/spaces/{space_id}/observe", {"force_rerender": force_rerender})
 
 
 # ---------------------------------------------------------------------------

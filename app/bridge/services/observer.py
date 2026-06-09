@@ -20,7 +20,15 @@ from app.query.docmost import get_page as fetch_page
 from app.query.docmost import list_pages as fetch_pages
 
 
-def observe_space(space_id: UUID) -> ObserveSpaceResult:
+def observe_space(space_id: UUID, *, force_rerender: bool = False) -> ObserveSpaceResult:
+    """Reconcile bridge heads against Docmost's current stored content.
+
+    Normally a page is skipped unless its remote `updated_at` advanced since the last observe.
+    With `force_rerender=True` that gate is bypassed so EVERY page is re-fetched and re-rendered
+    through the (current) egress renderer and its head re-anchored when the rendered hash changed.
+    This is how `resync` propagates an egress-renderer change to pages whose stored content did
+    not change. It touches no local files and, by the unchanged-hash guard below, is a no-op for
+    pages whose render did not change."""
     ensure_space_bootstrapped(space_id)
 
     remote_pages = fetch_pages(space_id)
@@ -30,6 +38,7 @@ def observe_space(space_id: UUID) -> ObserveSpaceResult:
     bridge_writes_confirmed = 0
     external_updates_recorded = 0
     external_deletions_recorded = 0
+    reanchored_count = 0
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -40,7 +49,13 @@ def observe_space(space_id: UUID) -> ObserveSpaceResult:
                 checked_pages += 1
                 checkpoint = get_observer_checkpoint(cur, remote_page.id)
 
-                if checkpoint and checkpoint.last_seen_remote_updated_at and remote_page.updated_at and remote_page.updated_at <= checkpoint.last_seen_remote_updated_at:
+                if (
+                    not force_rerender
+                    and checkpoint
+                    and checkpoint.last_seen_remote_updated_at
+                    and remote_page.updated_at
+                    and remote_page.updated_at <= checkpoint.last_seen_remote_updated_at
+                ):
                     continue
 
                 full_page = fetch_page(space_id, remote_page.id)
@@ -116,8 +131,12 @@ def observe_space(space_id: UUID) -> ObserveSpaceResult:
                     heads[snapshot.page_id] = current_head
                     continue
 
-                version = upsert_page_version(cur, snapshot, source="external_observer")
-                heads[snapshot.page_id] = upsert_page_head(cur, snapshot, version_id=version.id, source="external_observer")
+                # During a forced rerender a hash change means the renderer output moved (the
+                # stored content is unchanged); label and count it as a re-anchor, not a genuine
+                # external edit.
+                source = "rerender" if force_rerender else "external_observer"
+                version = upsert_page_version(cur, snapshot, source=source)
+                heads[snapshot.page_id] = upsert_page_head(cur, snapshot, version_id=version.id, source=source)
                 upsert_observer_checkpoint(
                     cur,
                     page_id=snapshot.page_id,
@@ -125,7 +144,10 @@ def observe_space(space_id: UUID) -> ObserveSpaceResult:
                     last_seen_remote_updated_at=snapshot.remote_updated_at,
                     last_observed_revision_hash=snapshot.revision_hash,
                 )
-                external_updates_recorded += 1
+                if force_rerender:
+                    reanchored_count += 1
+                else:
+                    external_updates_recorded += 1
 
             missing_remote_ids = [page_id for page_id, head in heads.items() if not head.is_deleted and page_id not in remote_by_id]
             for page_id in missing_remote_ids:
@@ -158,4 +180,5 @@ def observe_space(space_id: UUID) -> ObserveSpaceResult:
         bridge_writes_confirmed=bridge_writes_confirmed,
         external_updates_recorded=external_updates_recorded,
         external_deletions_recorded=external_deletions_recorded,
+        reanchored_count=reanchored_count,
     )

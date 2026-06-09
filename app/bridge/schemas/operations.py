@@ -44,3 +44,4 @@ class ObserveSpaceResult:
     bridge_writes_confirmed: int
     external_updates_recorded: int
     external_deletions_recorded: int
+    reanchored_count: int = 0

@@ -16,6 +16,7 @@ from helper.client import (
     get_space,
     get_space_tree,
     list_pages,
+    observe,
     reconcile as client_reconcile,
     resolve_conflict_remote,
 )
@@ -138,6 +139,28 @@ def sync_space(
     root = resolve_local_root(str(space_id), slug=space.get("slug"), local_root=local_root)
     write_replica_header(root, str(space_id), slug=space.get("slug"), name=space.get("name"))
     return _reconcile_sync(space_id, root, scope="space", scope_id=None)
+
+
+def resync_space(
+    space_id: UUID,
+    local_root: str | None = None,
+) -> dict[str, Any]:
+    """Re-anchor + reconcile a whole space. Unlike sync_space, this first re-renders EVERY page
+    on the server from Docmost's current content - even pages whose stored content did not change
+    - so an egress-renderer change propagates. It then runs the SAME two-way reconcile: a page
+    whose only difference is the corrected render heals as a pull (no content surfaced); a page
+    with un-pushed local edits surfaces as a conflict. It never force-pushes, so it cannot corrupt
+    a page by sending stale local markdown. Returns the normal sync summary plus reanchored_count
+    (pages whose server-side render changed this run)."""
+    space = get_space(space_id)
+    root = resolve_local_root(str(space_id), slug=space.get("slug"), local_root=local_root)
+    write_replica_header(root, str(space_id), slug=space.get("slug"), name=space.get("name"))
+    # Re-anchor every head server-side from Docmost (no local files touched here).
+    observed = observe(space_id, force_rerender=True)
+    # Then the normal reconcile pass applies any heal-pulls locally and surfaces real clashes.
+    result = _reconcile_sync(space_id, root, scope="space", scope_id=None)
+    result["reanchored_count"] = observed.get("reanchored_count", 0)
+    return result
 
 
 def _reconcile_sync(

@@ -48,9 +48,21 @@ class AutoPageWriteBatchOut(BaseModel):
     results: list[AutoPageWriteResultOut] = Field(default_factory=list)
 
 
+class AutoObserveIn(BaseModel):
+    force_rerender: bool = Field(
+        False,
+        description=(
+            "Re-render and re-anchor EVERY page in the space from Docmost, ignoring the "
+            "remote-updated-at gate. Used by resync to propagate an egress-renderer change to "
+            "pages whose stored content did not change. Touches no local files."
+        ),
+    )
+
+
 class AutoObserveOut(BaseModel):
     space_id: UUID
     checked_pages: int
     bridge_writes_confirmed: int
     external_updates_recorded: int
     external_deletions_recorded: int
+    reanchored_count: int = 0
