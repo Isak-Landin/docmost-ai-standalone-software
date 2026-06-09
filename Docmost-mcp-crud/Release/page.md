@@ -6,6 +6,8 @@ This page summarizes what the service currently provides. The service is a priva
 - Bridge-owned version state in a separate PostgreSQL database: a head plus append-only version history per page, with write intents and receipts.
 - Single revision-hash derivation from Docmost read-back content, so every surface (helper, direct CRUD, the worker, and direct Docmost-UI edits) agrees on the hash.
 - A reconcile brain (`POST /v1/spaces/{id}/reconcile`) that classifies each page three-way and applies clean one-sided changes, returning conflicts and deletion confirmations for a decision.
+- A structure-preserving ProseMirror-to-markdown renderer that is the faithful inverse of Docmost's `marked` ingest (matching its serializer conventions, with position-aware escaping), so nested lists, tables, task lists, callouts, and code round-trip without flattening or marker corruption.
+- A whole-space resync (`resync_space`, server `force_rerender` observe + the same two-way reconcile) that re-renders every page from Docmost and brings the space into sync regardless of whether a page changed - the path that propagates a server-side rendering change, healing via pull and surfacing conflicts the same way, never force-pushing.
 - A helper-facing contract under `/v1` and `/helper/v1` (reads, writes, move, snapshots, reconcile, resolve, confirm-deletion) plus batch and observe routes under `/auto-mcp`.
 - A background observer worker that folds direct-Docmost-UI edits into bridge state for every space on an interval, and backfills spaces that already hold content.
 - A client-side helper (stdio MCP) that is the model's only Docmost surface and owns the local replica.

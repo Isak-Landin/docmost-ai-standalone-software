@@ -16,6 +16,7 @@ The helper reaches the server over REST (`/v1`, `/helper/v1`, `/auto-mcp`), neve
 
 - Bridge-owned versioning - a separate PostgreSQL database tracks a head plus version history per page, independent of Docmost.
 - Single hash derivation - the revision hash is computed at exactly one place from Docmost's read-back content, so every surface agrees on it.
+- Faithful markdown round-trip - the ProseMirror-to-markdown renderer is the inverse of Docmost's `marked` ingest, so nested lists, tables, task lists, callouts, and code round-trip structurally; escaping is position-aware so ordinary prose is not over-escaped.
 - Space-scoped - pages are always queried within a space; there is no global page lookup.
 - Markdown in and out - the page title is a separate field, never an H1 in the body.
 - Worker observer - a background loop folds direct-Docmost-UI edits into bridge state for every space, whether or not a model has ever touched them.

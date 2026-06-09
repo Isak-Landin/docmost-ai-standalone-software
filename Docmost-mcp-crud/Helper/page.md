@@ -22,6 +22,7 @@ and workflow reference; the on-disk files it manages are described on the Replic
 | `sync_space(space_id)` | Reconcile a whole space in one pass. |
 | `sync_page(space_id, page_id)` | Reconcile a single page. |
 | `sync_page_tree(space_id, parent_page_id)` | Reconcile a parent page and all its descendants. |
+| `resync_space(space_id)` | Occasional whole-space variant: re-render every page on the server, then reconcile (see "Whole-space resync" below). |
 
 ### Resolution (only when a sync asks for it)
 
@@ -57,6 +58,26 @@ The rest exist for manual override.
 
 A clean sync needs no force and surfaces no conflicts.
 
+## Whole-space resync
+
+`resync_space(space_id)` is an occasional variant of `sync_space` for when every page must be
+brought into sync regardless of whether its content changed. It first asks the server to re-render
+EVERY page in the space from Docmost's current stored content (bypassing the observer's
+"updated-at" gate that normally skips unchanged pages), which re-anchors each page's head to the
+current rendering. It then runs the SAME two-way reconcile as `sync_space`.
+
+Use it after the server's markdown rendering was changed - so pages that were never re-edited still
+pick up the corrected rendering - or to recover from suspected drift. Because the renderer change
+does not touch Docmost's stored content, a plain `sync_space` would classify those pages as already
+synced and never re-render them; `resync_space` is what propagates a rendering change.
+
+It is two-way safe: a page whose only difference is the re-render heals as a pull (its local
+`page.md` is rewritten to the corrected rendering, no content surfaced); a page that also has
+un-pushed local edits surfaces as a `conflicts[]` entry for a decision. It never force-pushes, so
+it cannot send stale local content over a newer remote. The result is the normal sync summary plus
+`reanchored_count` (pages whose server-side render changed this run). Prefer plain `sync_space` for
+everyday work.
+
 ## Response shape
 
 A sync returns a compact summary, not page bodies:
@@ -68,6 +89,7 @@ A sync returns a compact summary, not page bodies:
 | `conflicts[]` | Pages where both sides changed since the recorded base. Each carries `remote_content`, `local_content`, and a line diff for a decision. |
 | `deletion_confirmations[]` | Deletions awaiting confirmation, each with a `direction`. |
 | `errors[]` | Per-page failures. |
+| `reanchored_count` | `resync_space` only: how many pages the server re-rendered to a changed result this run. |
 
 To confirm a change happened, check `applied_count` / `errors[]` - NOT `synced_count`. Only
 failures and decisions (`conflicts`, `errors`) carry page content; cleanly applied pages do not.
@@ -88,9 +110,12 @@ failures and decisions (`conflicts`, `errors`) carry page content; cleanly appli
   body, so Docmost never renders the title plus a duplicate heading. A tracked page keeps its
   recorded title and full body.
 - Use plain ASCII punctuation (no Unicode em-dashes, curly quotes, or ellipsis characters).
-- After a sync, a page's local `page.md` settles to Docmost's canonical rendering of the content,
-  so it may differ cosmetically from exactly what was typed (see the Data Models page, revision
-  hash).
+- After a sync, a page's local `page.md` settles to Docmost's canonical rendering of the content.
+  The rendering is structure-preserving (nested lists, tables, task lists, callouts, code, and the
+  like round-trip faithfully); what can differ from exactly what was typed are canonical-form
+  choices that match Docmost's own serializer - `-` bullets, ATX `#` headings, fenced code, two
+  spaces of indent per nested-list level, `:::type` callouts. See the Data Models page (revision
+  hash) for how this rendering is produced.
 
 ## IDs
 

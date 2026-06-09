@@ -9,7 +9,7 @@ bottom.
 `id`, `page_id`, `space_id`, `revision_hash`, `title`, `content`, `slug_id`, `parent_page_id`,
 `position`, `icon`, `source`, `source_write_intent_id`, `remote_updated_at`, `observed_at`,
 `created_at`. Unique on `(page_id, revision_hash)`. `source` is one of `bridge_write`,
-`external_observer`, `bootstrap`.
+`external_observer`, `bootstrap`, `rerender` (a forced re-render recorded by `resync_space`).
 
 ### page_heads (current head per page)
 
@@ -32,7 +32,9 @@ timestamps. The observer confirms a pending write by matching the read-back hash
 ### observer_checkpoints
 
 `page_id` (PK), `space_id`, `last_seen_remote_updated_at`, `last_observed_revision_hash`,
-timestamps. Lets the worker skip pages whose Docmost `updated_at` has not advanced.
+timestamps. Lets the worker skip pages whose Docmost `updated_at` has not advanced. A
+`resync_space` forced re-render deliberately bypasses this gate so every page is re-rendered and
+re-anchored even when its stored content did not change.
 
 ### local_page_snapshots
 
@@ -90,14 +92,22 @@ It is bridge-internal (never stored in Docmost) and is derived at exactly one pl
 `app/bridge/services/canonical.py`, always from Docmost's stored content read back and rendered
 to markdown.
 
-How the canonical markdown is produced: Docmost stores page bodies as ProseMirror JSON. The bridge
-renders that back to markdown deterministically - it strips Docmost's volatile per-node ids, and
-it keeps emphasis delimiters outside boundary whitespace (so `**bold**` next to an inline `code`
-span renders as valid CommonMark rather than a delimiter with a space inside it). Because every
-surface (helper push, direct CRUD, the worker/observer, and direct Docmost-UI edits) ends up as
-the same stored ProseMirror and is rendered the same way, a write-origin head and an
-observe-origin head for identical content are identical - there is no input-vs-rendered drift.
+How the canonical markdown is produced: Docmost stores page bodies as ProseMirror JSON, parsing
+inbound markdown with the `marked` parser (`breaks: true`) plus its callout/math extensions. The
+bridge renderer (`app/query/prosemirror.py`) is the faithful inverse of that ingest: it emits the
+markdown that re-imports to the same ProseMirror tree, matching the conventions of Docmost's own
+serializer - ATX `#` headings, `-` bullets, `N.` ordered lists, fenced code, `---` rules, `- [x]`
+task items, `:::type` callouts, `$...$`/`$$...$$` math, and a uniform two-space indent per
+nested-list level. So structure round-trips: nested lists stay nested, tables keep their columns,
+callouts keep their type. Escaping is position-aware - a token is escaped only where the parser
+would read it as structure at that position (a leading `-`/`#`/`>`/`N.`, a literal `|` inside a
+table cell, emphasis runs in prose, code via backtick-run escalation) - so ordinary prose keeps its
+punctuation. The renderer is deterministic (it strips Docmost's volatile per-node ids), so every
+surface (helper push, direct CRUD, the worker/observer, and direct Docmost-UI edits) ends up as the
+same stored ProseMirror and renders identically: a write-origin head and an observe-origin head for
+identical content are identical, with no input-vs-rendered drift.
 
 A consequence for clients: after a write, the head (and the content the helper writes back to the
-local replica) is this canonical rendering, which can differ cosmetically from the exact bytes a
-client typed. Treat the post-sync canonical form as the source of truth.
+local replica) is this canonical rendering. It preserves structure; it differs from the exact bytes
+a client typed only in the canonical-form choices above. Treat the post-sync canonical form as the
+source of truth.

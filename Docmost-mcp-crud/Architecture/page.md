@@ -39,14 +39,14 @@ The system is a server bridge plus a client-side helper. The model talks only to
 | --- | --- |
 | `app/main.py` | App factory, router registration, `/mcp` mount, MCP session lifespan |
 | `app/query/docmost.py` | Direct Docmost DB reads; ProseMirror -> markdown render |
-| `app/query/prosemirror.py` | Deterministic ProseMirror-JSON to markdown renderer |
+| `app/query/prosemirror.py` | Deterministic ProseMirror-JSON to markdown renderer; faithful inverse of Docmost's `marked` ingest (structure-preserving, position-aware escaping) |
 | `app/query/db.py` | Docmost DB connection / DSN, `DocmostConnectionError` |
 | `app/query/replica.py` | Server-side replica structure / standards (operator + `/sync`) |
 | `app/write/docmost.py` | Docmost REST write client |
 | `app/bridge/services/write_pipeline.py` | All bridge writes: intents / receipts, canonical finalize, rollback |
 | `app/bridge/services/canonical.py` | The single revision-hash derivation point |
 | `app/bridge/services/versioning.py` | `revision_hash`, head-alignment checks, snapshots |
-| `app/bridge/services/observer.py` | Folds external / manual Docmost edits into bridge state |
+| `app/bridge/services/observer.py` | Folds external / manual Docmost edits into bridge state; `force_rerender` (used by `resync_space`) re-anchors every head by re-rendering, bypassing the updated-at gate |
 | `app/bridge/services/bootstrap.py` | `ensure_space_bootstrapped` backfill |
 | `app/bridge/repositories/` | Bridge tables access layer |
 | `app/reconcile/` | Three-way classification brain + reconcile / resolve / confirm-deletion |
@@ -62,7 +62,7 @@ The system is a server bridge plus a client-side helper. The model talks only to
 - Read (REST or helper): router -> `app/query/docmost.py` -> Docmost DB -> ProseMirror rendered to markdown -> Pydantic model.
 - Write (helper / auto-mcp / direct CRUD): all converge on `app/bridge/services/write_pipeline.py`, which records a write intent, calls the Docmost REST API, finalizes the head from a canonical Docmost read-back, and confirms the intent. Caller mode `helper` / `auto_sync` requires head alignment; `crud` does not.
 - Reconcile: the helper posts the local page set plus the last-synced tree to `app/reconcile`; the brain classifies each page three-way and applies clean one-sided changes, returning four buckets.
-- Observe: the worker calls `observe_space` for each space, confirming pending bridge writes and recording outside changes.
+- Observe: the worker calls `observe_space` for each space, confirming pending bridge writes and recording outside changes. `resync_space` calls the same `observe_space` with `force_rerender=True` to re-render and re-anchor every page before reconciling.
 
 ## Networking
 

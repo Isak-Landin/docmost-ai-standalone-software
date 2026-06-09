@@ -68,12 +68,22 @@ the full response shape.
 the engine classifies the page as conflicted rather than allowing a clean push. The helper keeps
 the base aligned after every successful sync.
 
+`resync_space(space_id)` is an occasional whole-space variant: it asks the server to re-render
+every page from Docmost first (even pages whose content did not change), then runs the same
+reconcile. Use it to bring every page into sync regardless of change - for example after a
+server-side rendering change, which a plain `sync_space` would otherwise treat as already synced.
+See the Helper page for details.
+
 ## Post-sync canonical form
 
 After a sync, a page's local `page.md` settles to Docmost's canonical rendering of the content
-(the same rendering the version hash is taken from). It may therefore differ cosmetically from
-exactly what was typed - benign normalization, not data loss. See the Data Models page (revision
-hash) for why.
+(the same rendering the version hash is taken from). This rendering is structure-preserving: nested
+lists, ordered lists, task lists, tables, callouts, code blocks, and inline marks round-trip
+faithfully through Docmost's markdown parser. What can differ from exactly what was typed are
+canonical-form choices that match Docmost's own serializer - `-` bullets, ATX `#` headings, fenced
+code, two spaces of indent per nested-list level, and `:::type` callouts - plus position-aware
+escaping of characters that would otherwise be re-read as structure. It is canonicalization, not
+data loss. See the Data Models page (revision hash) for how it is produced.
 
 ## Low-level escape hatches
 

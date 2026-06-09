@@ -204,6 +204,10 @@ Docmost surface.
   `deletion_confirmations` the result returns - resolve with
   `resolve_conflict(space_id, page_id, merged_content)` and
   `confirm_deletion(space_id, page_id, direction)` - and ask the user when unclear. Never force.
+- Resync (occasional): `resync_space(space_id)` re-renders every page on the server, then runs the
+  same two-way reconcile, for when every page must be brought into sync regardless of whether it
+  changed (e.g. after a server-side rendering change). Heals via pull, surfaces conflicts the same
+  way, never force-pushes. Use plain `sync_space` for everyday work.
 - IDs: every `space_id` / `page_id` / `parent_page_id` must come from a live tool response
   (`list_spaces`, `list_pages`, `get_space_tree`), never from memory.
 - Content: markdown only; the page title is a separate field (do not start the body with a
@@ -233,6 +237,12 @@ so paste it only where it applies and set the project name:
 2. Call `sync_space(space_id)` (or `sync_page` / `sync_page_tree`) with only the id.
 3. The helper syncs both ways and returns a short summary plus any conflicts or deletions that
    need a decision; resolve those with `resolve_conflict` / `confirm_deletion`.
+
+For the occasional case where every page must be brought into sync regardless of whether it
+changed - for example after a server-side rendering change, so pages never re-edited still pick up
+the corrected rendering - call `resync_space(space_id)`. It re-renders every page on the server and
+runs the same two-way reconcile (healing via pull, surfacing conflicts the same way, never
+force-pushing), and returns the normal summary plus `reanchored_count`.
 
 ## Updating and troubleshooting
 

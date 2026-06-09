@@ -2,7 +2,7 @@
 
 The docmost bridge exposes two MCP-shaped surfaces; the consuming model uses only one.
 
-- docmost-helper (stdio) - the model's sole Docmost surface. It owns local replica file IO and runs the automated reconcile. Tools: reads (list_spaces, get_space, get_space_tree, list_pages, get_page), the three sync tools (sync_space, sync_page, sync_page_tree), resolution (resolve_conflict, confirm_deletion), and low-level escape hatches (create/update/delete/move page, create/delete space, push_pages, pull_pages, and the stash tools).
+- docmost-helper (stdio) - the model's sole Docmost surface. It owns local replica file IO and runs the automated reconcile. Tools: reads (list_spaces, get_space, get_space_tree, list_pages, get_page), the three sync tools (sync_space, sync_page, sync_page_tree) plus the occasional whole-space resync_space (re-renders every page then reconciles), resolution (resolve_conflict, confirm_deletion), and low-level escape hatches (create/update/delete/move page, create/delete space, push_pages, pull_pages, and the stash tools).
 - docmost-mcp (HTTP, the server's `/mcp`) - a quiet operator and inspection fallback only. It is NOT registered as a model MCP. A human operator reaches it directly when needed; the model never uses it.
 
 ## How it is registered in this environment
@@ -46,3 +46,5 @@ Placement follows from that: the helper is the model's primary surface and belon
 2. Call `sync_space(space_id)` (or `sync_page` / `sync_page_tree`) with only the id.
 3. The helper reconciles everything (push, create, pull and materialize, move, and local-plus-remote version alignment) and returns `synced_count` and `applied`, plus only the items needing a decision: `conflicts` (with remote and local content and a diff) and `deletion_confirmations`. A clean sync needs no force.
 4. Resolve a conflict with `resolve_conflict(space_id, page_id, merged_content)`; confirm a deletion with `confirm_deletion(space_id, page_id, direction)`. Ask the user if a resolution is unclear. Never force.
+
+For the occasional case where every page must be brought into sync regardless of whether it changed - e.g. after a server-side rendering change so pages never re-edited still pick up the corrected rendering - call `resync_space(space_id)`: it re-renders every page on the server, then reconciles the whole space the same two-way way (healing via pull, surfacing conflicts the same way, never force-pushing), returning the normal summary plus `reanchored_count`.

@@ -42,6 +42,19 @@ When a sync returns `conflicts[]` or `deletion_confirmations[]`:
 `stash_page` / `accept_remote` / `push_pages` / `pull_pages` remain as low-level escape hatches;
 normal work goes through the three sync tools.
 
+## Whole-space resync
+
+`resync_space(space_id)` is an occasional whole-space variant of `sync_space`. It first re-renders
+EVERY page from Docmost on the server (not just pages whose content changed), then runs the same
+two-way reconcile. Use it when you need every page brought into sync regardless of whether it
+changed — for example after the server's markdown rendering was changed, so pages that were never
+re-edited still pick up the corrected rendering, or to recover from suspected drift. A page whose
+only difference is the re-render heals automatically as a pull (no content returned); a page that
+also has un-pushed local edits surfaces as a `conflicts[]` entry for your decision. It never
+force-pushes, so it cannot overwrite or corrupt either side, and it returns the normal summary
+plus `reanchored_count` (pages whose server render changed this run). Prefer plain `sync_space` for
+everyday work.
+
 ## IDs
 
 All `space_id`, `page_id`, and `parent_page_id` values must come from live tool responses in the

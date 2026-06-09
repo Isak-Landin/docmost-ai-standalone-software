@@ -212,16 +212,22 @@ right after writing, add a short wait or read from the REST response instead.
 | Replace/append/prepend content on an existing page | `POST /api/pages/update` with `operation` + `content` + `format` |
 | Rename a page or change its icon only | `POST /api/pages/update` with `title` / `icon`, no content |
 
-For our use case (syncing a local-first working-copy replica -> remote Docmost), these endpoints are the
-low-level building blocks used by the higher-level sync workflow:
+For our use case (syncing a local-first working-copy replica -> remote Docmost), these endpoints are
+the low-level building blocks beneath the higher-level sync workflow.
 
-1. use `POST /spaces/{space_id}/sync/local-pages` with `local_root` when needed to get the canonical local-only page scaffold plan for the chosen working copy
-2. let the client write the returned `page.md` and `_meta.json` locally
-3. use replica status/diff tooling with client-reported local page state to determine whether the page is local-only, remote-only, or conflicting
-4. let `push_replica` call `POST /api/pages/create` when a local-only replica page needs to become a new remote page
-5. let `push_replica` call `POST /api/pages/update` when an existing remote page should be updated
-6. store the returned `base_revision_hash` locally after a successful pull or push so future stale-push detection has a common base
-7. only bypass the higher-level sync workflow when you intentionally need direct per-page control
+> **DEPRECATED MODEL WORKFLOW FROM HERE DOWN.** The higher-level sync workflow described below -
+> the model driving `POST /spaces/{space_id}/sync/local-pages`, `get_sync_status`, `get_sync_diff`,
+> `push_replica`, `pull_replica`, `get_replica_structure`, `create_local_replica_page`,
+> `recommended_next_action` - is superseded for the model. The model is now reconcile-first: it
+> edits the local replica, then calls `sync_space` / `sync_page` / `sync_page_tree` (or the
+> occasional whole-space `resync_space`) with only the id and resolves with `resolve_conflict` /
+> `confirm_deletion`. Those `/spaces/{id}/sync/*` routes and `push_replica` / `pull_replica` /
+> `get_sync_status` / `get_sync_diff` / replica-planner tools still exist, but only as a LEGACY
+> surface (`app/sync/`) and the operator `/mcp` surface (`app/mcp_server.py`); they are not the
+> model's path. For the current model-facing surface see the README "Docmost (docmost-helper)" block
+> and the Docmost-MCP-Service docs (Helper, Replica System); for the server contract see the
+> Architecture and Data Models pages. The sections ABOVE (Docmost REST `create` / `update` / `move`
+> / `delete`, `parseProsemirrorContent`, the v0.71.1 requirement) remain accurate and current.
 
 ---
 
