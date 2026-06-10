@@ -53,11 +53,11 @@ title and its full body. After the sync, the local `page.md` is rewritten withou
 1. Edit `page.md` and/or move page directories.
 2. Call `sync_space(space_id)` (or `sync_page` / `sync_page_tree`) with only the id.
 3. The helper builds the local page set plus the last-synced `_tree.json`, calls the server's
-   reconcile brain, and applies the result (push / create / pull / materialize / move). It writes
-   canonical content into the local files and realigns each `_meta.json` `base_revision_hash` and
-   the `_tree.json` snapshot.
+  reconcile brain, and applies the result (push / create / pull / materialize / move). It writes
+  canonical content into the local files and realigns each `_meta.json` `base_revision_hash` and
+  the `_tree.json` snapshot.
 4. Only `conflicts` and `deletion_confirmations` need a model decision (`resolve_conflict` /
-   `confirm_deletion`).
+  `confirm_deletion`).
 
 The summary a sync returns is metadata-only for cleanly applied pages: page content is written to
 the local files, not returned, so a clean sync does not flood the model's context. Only conflicts
