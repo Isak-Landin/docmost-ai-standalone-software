@@ -27,6 +27,16 @@ try:
 except Exception as _exc:  # handshake is best-effort; the helper still starts
     print(f"WARNING: docmost contract handshake failed: {_exc}", file=sys.stderr)
 
+# Opt-in: when DOCMOST_REPLICA_GIT_AUTOSYNC is set for this repo (via .envrc/direnv), ensure the
+# tagged cron line that auto-commits + pushes the in-repo replica. Best-effort; never blocks start.
+if os.environ.get("DOCMOST_REPLICA_GIT_AUTOSYNC"):
+    try:
+        from helper import replica_autosync
+
+        replica_autosync.ensure_cron()
+    except Exception as _exc:  # cron setup is best-effort; the helper still starts
+        print(f"WARNING: replica autosync cron ensure failed: {_exc}", file=sys.stderr)
+
 mcp = FastMCP(
     "docmost-helper",
     instructions=(
@@ -51,7 +61,13 @@ mcp = FastMCP(
         "create_page / update_page / delete_page / move_page / push_pages / pull_pages / "
         "accept_remote and the stash tools are low-level escape hatches, not the normal path. "
         "Content is markdown; the page title is a separate parameter (never an H1 in the body); "
-        "use plain ASCII punctuation."
+        "use plain ASCII punctuation.\n\n"
+        "Replica git backup: the replica stays a tracked part of its repo (not gitignored). A repo "
+        "may opt in (env DOCMOST_REPLICA_GIT_AUTOSYNC); when on, a helper-managed cron commits and "
+        "pushes replica changes to the repo's own git remote, so the replica is versioned for you - "
+        "do not be surprised to find replica edits already committed/pushed, and do not manually "
+        "git-commit/push the replica. This is git-only automation; the Docmost<->local sync stays "
+        "yours to run."
     ),
 )
 
