@@ -58,8 +58,19 @@ only acts on the `conflicts` / `deletion_confirmations` a sync returns (via `res
 | Variable | Required | Description |
 |---|---|---|
 | `DOCMOST_MCP_SERVER_URL` | Yes | Base URL of the running docmost-mcp server |
+| `DOCMOST_REPLICA_GIT_AUTOSYNC` | No | Opt in to automatic git backup of the in-repo replica (see below). |
+| `DOCMOST_REPLICA_AUTOSYNC_ROOTS` | No | Comma-separated repo-relative replica roots this repo owns and auto-pushes; a single-replica repo needs none. |
 
-The helper reads `.env` from the `helper/` directory at startup via `python-dotenv`.
+The helper reads `.env` from the `helper/` directory at startup via `python-dotenv`. The autosync
+vars are read from the helper process environment, so set them in the repo `.envrc` or the helper's
+MCP-config `env` object.
+
+## Replica git autosync
+
+When enabled, the helper commits and pushes its in-repo replica to the repo's own git remote after a
+sync - current branch only, remote discovered dynamically, never force, scoped to the replica
+subtree. It runs in-process (there is no cron); the Docmost<->local sync stays manual. So replica
+edits may already be committed and pushed for you - do not hand-git the replica.
 
 ## Sync model (reconcile)
 

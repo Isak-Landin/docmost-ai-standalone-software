@@ -157,6 +157,14 @@ DOCMOST_MCP_SERVER_URL=https://your-server-host        # or http://host:8099
 DOCMOST_REPLICA_BASE=
 ```
 
+### Replica git autosync (optional)
+
+The replica is a tracked part of the consuming repo. Opt in with `DOCMOST_REPLICA_GIT_AUTOSYNC` (in
+the repo `.envrc` or the helper's MCP-config `env`) and the helper commits and pushes replica changes
+to the repo's own git remote after a sync - current branch only, never force, in-process (no cron).
+A repo holding more than one replica sets `DOCMOST_REPLICA_AUTOSYNC_ROOTS` (comma-separated
+repo-relative roots) to declare which it owns; a single-replica repo needs none.
+
 ### 2. Register the helper as a stdio MCP (absolute paths to THIS venv)
 
 Claude Code launches the helper as a subprocess, so the entry must point at the venv's python and
@@ -230,6 +238,7 @@ so paste it only where it applies and set the project name:
 - [ ] registered in exactly one Claude Code scope; the operator `/mcp` is not registered for the model
 - [ ] `CLAUDE.md` instructions present in the consuming project
 - [ ] `DOCMOST_REPLICA_BASE` set only if replicas live outside the project root
+- [ ] (optional) `DOCMOST_REPLICA_GIT_AUTOSYNC` set to enable replica git autosync; `DOCMOST_REPLICA_AUTOSYNC_ROOTS` set if the repo has more than one replica
 
 ## Using it
 
