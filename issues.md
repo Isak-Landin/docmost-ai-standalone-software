@@ -1,14 +1,16 @@
 # Known Issues
 
 Status:
-- ISSUE-2 (Markdown INGEST re-interpretation): OPEN. Documented below with the exact symptom,
-  the exact affected pages, the mechanism, a replication recipe, and the prevention fix.
+- ISSUE-2 (Markdown INGEST re-interpretation): RESOLVED for the manifested case (flanking
+  `_`/`__`) by write-path escaping deployed 2026-06-12 (f3eaf1a); the latent `$`/`$$` math variant
+  is not auto-escaped and stays mitigated by the backtick convention. Symptom, mechanism, recipe,
+  and resolution below.
 
 This file is the dedicated issues log for docmost-mcp-server.
 
 ---
 
-## ISSUE-2: Markdown INGEST re-interpretation - unescaped markdown-special tokens are rewritten on first push (OPEN)
+## ISSUE-2: Markdown INGEST re-interpretation - unescaped markdown-special tokens are rewritten on first push (RESOLVED for flanking underscores; $/math residual)
 
 Severity: LOW-MEDIUM. It is NOT whole-page and NOT silent on untouched sections:
 it only rewrites the specific token, and only on the first push of the unescaped form (it is stable
@@ -88,29 +90,35 @@ span is at risk: a line-leading `#` / `>` / `-` / `+` / `*` / `|`, `__bold__`, f
 4. Generalize: any `X__Y__Z` where the `__` pairs sit at non-alphanumeric boundaries bolds `Y`;
    `$x$` / `$$x$$` become math. A backticked `` `app/__init__.py` `` round-trips literally.
 
-### Fix direction (to prevent it)
+### Resolution (implemented + deployed 2026-06-12, f3eaf1a)
 
-The egress renderer cannot fix this - the literal intent is destroyed at ingest. Prevention must be
-on the WRITE/INGEST path or by an authoring convention:
+Option A (write-path escaping) was implemented for the manifested case. `app/write/ingest_escape.py`
+(`escape_markdown_for_ingest`) escapes flanking `_`/`__` that are NOT inside inline code or a fenced
+block before `app/write/docmost.py` sends the markdown with `format:"markdown"`, so `marked` stores
+them as literal text. It mirrors the egress convention (emphasis is `*`/`**`, flanking `_`/`__` is
+literal - `_apply_marks` / `_UNDER_RUN`), is code-aware, and is idempotent: a `(?<!\\)` guard never
+re-escapes an already-escaped `\_`, so the canonical read-back re-pushes as a no-op and the revision
+hash stays stable. Verified live against Docmost - `app/__init__.py:90` now reads back as literal
+`app/\_\_init\_\_.py:90` (not bold `**init**`), a backticked path and a real `**bold**` are
+untouched, and re-pushing the escaped form returns an identical revision hash. Tests:
+`tests/test_ingest_escape.py`.
 
-- Option A (write-path escaping - the real fix if the helper must accept arbitrary code-bearing
-  markdown losslessly): before shipping local markdown to Docmost in `app/write/docmost.py`,
-  escape ingest-significant sequences that are NOT inside a code span / fence so `marked` does not
-  reinterpret them - e.g. `__` -> `\_\_`, a bare `$...$` / `$$` -> escaped `$`, a line-leading
-  structural marker that is meant as literal text. This needs the same "is this inside code?"
-  position awareness the egress escaper already has. Do NOT blanket-escape - that would corrupt
-  intentional emphasis / math / structure.
-- Option B (authoring convention, no server change): wrap code, paths, and dunders in backticks
-  (`` `app/__init__.py` ``). Docmost leaves code-span content literal, so it round-trips faithfully.
-  This is already the guidance in the round-trip memory (which lists `$$` and now `__`).
-- Recommended regardless: add an offline INGEST-asymmetry test that pushes a fixture containing
-  `app/__init__.py`, `$x$`, and a line-leading `#` / `-` / `|`, then asserts the chosen policy
-  (escaped-and-literal under Option A, or that the documented backtick convention is required).
+Residual (not auto-fixed): the `$...$` / `$$` math variant of the same asymmetry. The escaper
+deliberately leaves `$` alone - stably escaping it would also require the egress to escape literal
+`$`, and would turn any genuinely-intended math literal. Math is effectively never used in these
+technical docs, so it stays covered by the backtick convention below; auto-escaping `$` is a
+follow-up only if math is confirmed never-wanted.
+
+### Still recommended: authoring convention
+
+Backtick code, paths, and dunders (`` `app/__init__.py` ``). Docmost leaves code-span content
+literal, so it round-trips faithfully regardless - and it is still required for the `$`/math
+residual above.
 
 ### Key references
 
-- Write / ingest (delegated to Docmost): `app/write/docmost.py` (raw markdown sent with
-  `format: "markdown"`).
+- Write / ingest: `app/write/docmost.py` sends markdown with `format: "markdown"`, now after
+  `app/write/ingest_escape.py` neutralizes flanking `_`/`__` outside code (the ISSUE-2 fix).
 - Docmost ingest grammar (NOT in this repo): `marked` CommonMark + callout + math extensions,
   `packages/editor-ext/src/lib/markdown/` (Docmost v0.71.1).
 - Egress (correct, faithful to the stored node - not the cause): `app/query/prosemirror.py`.
