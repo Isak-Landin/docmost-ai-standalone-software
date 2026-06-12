@@ -58,8 +58,8 @@ everyday work.
 ## Replica git backup (automatic)
 
 The replica stays a tracked part of this repo (it is NOT gitignored). When this repo opts in via
-`DOCMOST_REPLICA_GIT_AUTOSYNC` in its `.envrc`, a helper-managed cron commits and pushes replica
-changes to the repo's own git remote on a schedule. So replica edits are versioned for you: do not
+`DOCMOST_REPLICA_GIT_AUTOSYNC` in its `.envrc`, the helper itself commits and pushes replica
+changes to the repo's own git remote after a sync (current branch only, never force). So replica edits are versioned for you: do not
 be surprised to find them already committed/pushed, and do not manually `git` the replica. This is
 git-only automation; the Docmost<->local sync above is still yours to run.
 

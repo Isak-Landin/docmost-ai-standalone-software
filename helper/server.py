@@ -15,6 +15,7 @@ from uuid import UUID
 from mcp.server.fastmcp import FastMCP
 
 from helper import client, sync
+from helper import replica_autosync
 
 _EXPECTED_CONTRACT = "1"
 try:
@@ -27,15 +28,12 @@ try:
 except Exception as _exc:  # handshake is best-effort; the helper still starts
     print(f"WARNING: docmost contract handshake failed: {_exc}", file=sys.stderr)
 
-# Opt-in: when DOCMOST_REPLICA_GIT_AUTOSYNC is set for this repo (via .envrc/direnv), ensure the
-# tagged cron line that auto-commits + pushes the in-repo replica. Best-effort; never blocks start.
-if os.environ.get("DOCMOST_REPLICA_GIT_AUTOSYNC"):
-    try:
-        from helper import replica_autosync
+try:
+    from helper import replica_autosync
 
-        replica_autosync.ensure_cron()
-    except Exception as _exc:  # cron setup is best-effort; the helper still starts
-        print(f"WARNING: replica autosync cron ensure failed: {_exc}", file=sys.stderr)
+    replica_autosync.cleanup_legacy_cron()
+except Exception as _exc:  # best-effort; the helper still starts
+    print(f"WARNING: replica autosync cron cleanup failed: {_exc}", file=sys.stderr)
 
 mcp = FastMCP(
     "docmost-helper",
@@ -63,11 +61,11 @@ mcp = FastMCP(
         "Content is markdown; the page title is a separate parameter (never an H1 in the body); "
         "use plain ASCII punctuation.\n\n"
         "Replica git backup: the replica stays a tracked part of its repo (not gitignored). A repo "
-        "may opt in (env DOCMOST_REPLICA_GIT_AUTOSYNC); when on, a helper-managed cron commits and "
-        "pushes replica changes to the repo's own git remote, so the replica is versioned for you - "
-        "do not be surprised to find replica edits already committed/pushed, and do not manually "
-        "git-commit/push the replica. This is git-only automation; the Docmost<->local sync stays "
-        "yours to run."
+        "may opt in (env DOCMOST_REPLICA_GIT_AUTOSYNC); when on, the helper itself commits and "
+        "pushes replica changes to the repo's own git remote after a sync (current branch only, "
+        "never force), so the replica is versioned for you - do not be surprised to find replica "
+        "edits already committed/pushed, and do not manually git-commit/push the replica. This is "
+        "git-only automation; the Docmost<->local sync stays yours to run."
     ),
 )
 
@@ -181,6 +179,7 @@ def move_page(space_id: str, page_id: str, position: str, parent_page_id: Option
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
+@replica_autosync.autosync_after
 def sync_space(space_id: str, local_root: Optional[str] = None) -> dict:
     """Full bidirectional reconcile for a whole space in one pass. Pass ONLY the space id.
     The helper does everything automatically: pushes local edits, creates local-only pages,
@@ -196,6 +195,7 @@ def sync_space(space_id: str, local_root: Optional[str] = None) -> dict:
 
 
 @mcp.tool()
+@replica_autosync.autosync_after
 def resync_space(space_id: str, local_root: Optional[str] = None) -> dict:
     """Re-anchor and reconcile a whole space when you need EVERY page brought into sync, whether
     or not it changed - e.g. after the server's markdown renderer was corrected, so pages that
@@ -212,6 +212,7 @@ def resync_space(space_id: str, local_root: Optional[str] = None) -> dict:
 
 
 @mcp.tool()
+@replica_autosync.autosync_after
 def sync_page(space_id: str, page_id: str, local_root: Optional[str] = None) -> dict:
     """Reconcile a single page by id (same automated full-fidelity reconcile as sync_space,
     scoped to one page). Returns synced_count (already in sync) + applied_count/applied[]
@@ -220,6 +221,7 @@ def sync_page(space_id: str, page_id: str, local_root: Optional[str] = None) -> 
 
 
 @mcp.tool()
+@replica_autosync.autosync_after
 def sync_page_tree(space_id: str, parent_page_id: str, local_root: Optional[str] = None) -> dict:
     """Reconcile a page subtree by parent id (the parent plus all descendants), full-fidelity
     and automated. Returns synced_count (already in sync) + applied_count/applied[] (changed
@@ -228,6 +230,7 @@ def sync_page_tree(space_id: str, parent_page_id: str, local_root: Optional[str]
 
 
 @mcp.tool()
+@replica_autosync.autosync_after
 def resolve_conflict(space_id: str, page_id: str, merged_content: str, local_root: Optional[str] = None) -> dict:
     """Resolve a conflict surfaced by a sync: provide the final merged markdown and the helper
     applies it. Ask the user first if the right merge is unclear."""
@@ -235,6 +238,7 @@ def resolve_conflict(space_id: str, page_id: str, merged_content: str, local_roo
 
 
 @mcp.tool()
+@replica_autosync.autosync_after
 def confirm_deletion(space_id: str, page_id: str, direction: str, local_root: Optional[str] = None) -> dict:
     """Confirm a deletion surfaced by a sync. direction='remote' soft-deletes the remote page and
     drops the local copy; direction='local' accepts a remote deletion by dropping the local copy.
@@ -243,6 +247,7 @@ def confirm_deletion(space_id: str, page_id: str, direction: str, local_root: Op
 
 
 @mcp.tool()
+@replica_autosync.autosync_after
 def push_pages(
     space_id: str,
     local_paths: list[str],
@@ -254,6 +259,7 @@ def push_pages(
 
 
 @mcp.tool()
+@replica_autosync.autosync_after
 def pull_pages(
     space_id: str,
     page_ids: Optional[list[str]] = None,
@@ -272,6 +278,7 @@ def pull_pages(
 
 
 @mcp.tool()
+@replica_autosync.autosync_after
 def accept_remote(
     space_id: str,
     page_id: str,

@@ -209,11 +209,16 @@ def replica_base_dir() -> str:
     return os.environ.get("DOCMOST_REPLICA_BASE", ".")
 
 
+_DISCOVERY_SKIP_DIRS = {".git", ".claude", ".venv", "node_modules", "__pycache__"}
+
+
 def discover_replica_root(space_id: str, base_dir: str | None = None) -> str | None:
     base = Path(base_dir or replica_base_dir())
     if not base.exists():
         return None
     for header in base.rglob("_replica.json"):
+        if set(header.parts) & _DISCOVERY_SKIP_DIRS:
+            continue
         try:
             data = json.loads(header.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
