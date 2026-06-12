@@ -123,6 +123,16 @@ All `space_id`, `page_id`, and `parent_page_id` values passed to tools must come
 responses in the current session (`list_spaces`, `list_pages`, `get_space_tree`), never from
 memory or inference.
 
+## Restarting the helper
+
+The helper is a long-lived stdio subprocess of Claude Code; it does NOT pick up helper code changes
+(anything under `helper/`) or MCP `env` changes (for example `DOCMOST_REPLICA_AUTOSYNC_ROOTS`) until
+it is restarted. Claude cannot restart it from inside a session - you restart it: relaunch the
+Claude Code CLI from the repo (with direnv active so `.envrc` and the MCP config load), or reconnect
+MCP in a running session with `/mcp`. After a server rebuild, a `Session not found` message is stale
+transport, not missing content - reconnect. The Developer Handbook has the full restart procedure,
+the verification steps, and when a bridge rebuild is also needed.
+
 ## Relationship to the server
 
 The helper reaches the server over its REST contract (reads and writes under `/v1` and
