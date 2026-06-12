@@ -17,6 +17,7 @@ from typing import Any, Optional
 import httpx
 
 from app.docmost_auth.auth import auth_headers, invalidate_token
+from app.write.ingest_escape import escape_markdown_for_ingest
 
 
 def _base_url() -> str:
@@ -108,7 +109,7 @@ def create_page(
     if title is not None:
         payload["title"] = title
     if content is not None:
-        payload["content"] = content
+        payload["content"] = escape_markdown_for_ingest(content)
         payload["format"] = "markdown"
     if parent_page_id is not None:
         payload["parentPageId"] = parent_page_id
@@ -141,7 +142,7 @@ def update_page(
     if icon is not None:
         payload["icon"] = icon
     if content is not None:
-        payload["content"] = content
+        payload["content"] = escape_markdown_for_ingest(content)
         payload["format"] = "markdown"
         payload["operation"] = operation
     return _post("/api/pages/update", payload)
