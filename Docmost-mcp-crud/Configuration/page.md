@@ -54,6 +54,18 @@ All configuration is supplied via environment variables. The server reads `.env`
 | `DOCMOST_MCP_SERVER_URL` | Yes | Base URL of the running server (the helper calls `/v1`, `/helper/v1`, `/auto-mcp`) |
 | `DOCMOST_REPLICA_BASE` | No | Directory under which the helper discovers replicas by `_replica.json` space id. Defaults to the helper's current working directory. |
 
+## Helper: replica git autosync (optional)
+
+When a repo opts in, the helper commits and pushes its in-repo replica to the repo's own git remote
+after a sync (current branch only, never force), so the replica is versioned for you. These are read
+from the helper process environment; set them in the repo `.envrc` or, preferably for the scope, the
+helper's MCP-config `env` object.
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `DOCMOST_REPLICA_GIT_AUTOSYNC` | No | Opt in to automatic git backup of the in-repo replica. Truthy enables; unset (or `0` / `false` / `off` / `no`) disables. |
+| `DOCMOST_REPLICA_AUTOSYNC_ROOTS` | No | Comma-separated repo-relative replica roots this repo OWNS and auto-pushes. Unset: a single-replica repo uses its one replica; a multi-replica repo is a safe no-op until this is set. |
+
 ## DSN selection
 
 For each database, if the `*_DB_URL` is set and non-empty it is used as the DSN; otherwise the DSN is built from the individual host / port / name / user / password values.

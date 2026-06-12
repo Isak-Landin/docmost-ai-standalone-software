@@ -85,6 +85,17 @@ code, two spaces of indent per nested-list level, and `:::type` callouts - plus 
 escaping of characters that would otherwise be re-read as structure. It is canonicalization, not
 data loss. See the Data Models page (revision hash) for how it is produced.
 
+## Replica git autosync (optional)
+
+The replica stays a tracked part of its repo (it is not gitignored). When the repo opts in via
+`DOCMOST_REPLICA_GIT_AUTOSYNC`, the helper itself commits and pushes replica changes to the repo's
+own git remote after a sync - current branch only, remote discovered dynamically, never force, and
+scoped to the replica subtree so unrelated staged code is never swept in. A repo that holds more
+than one replica declares which it owns with `DOCMOST_REPLICA_AUTOSYNC_ROOTS` (a single-replica repo
+needs no declaration; a multi-replica repo with none set is a safe no-op). This is git-only
+automation that runs in-process (no cron); the Docmost-to-local sync stays manual. So replica edits
+may already be committed and pushed for you - do not hand-git the replica.
+
 ## Low-level escape hatches
 
 `push_pages`, `pull_pages`, `accept_remote`, and the stash tools (`stash_page` / `get_stash` /
