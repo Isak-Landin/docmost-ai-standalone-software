@@ -113,9 +113,9 @@ failures and decisions (`conflicts`, `errors`) carry page content; cleanly appli
 - After a sync, a page's local `page.md` settles to Docmost's canonical rendering of the content.
   The rendering is structure-preserving (nested lists, tables, task lists, callouts, code, and the
   like round-trip faithfully); what can differ from exactly what was typed are canonical-form
-  choices that match Docmost's own serializer - `-` bullets, ATX `#` headings, fenced code, two
-  spaces of indent per nested-list level, `:::type` callouts. See the Data Models page (revision
-  hash) for how this rendering is produced.
+  choices that match Docmost's own serializer - `-` bullets, ATX `#` headings, fenced code,
+  marker-width indent per nested-list level (two spaces under a bullet, three under an ordered item),
+  `:::type` callouts. See the Data Models page (revision hash) for how this rendering is produced.
 
 ## IDs
 

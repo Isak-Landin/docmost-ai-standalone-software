@@ -81,8 +81,9 @@ After a sync, a page's local `page.md` settles to Docmost's canonical rendering 
 lists, ordered lists, task lists, tables, callouts, code blocks, and inline marks round-trip
 faithfully through Docmost's markdown parser. What can differ from exactly what was typed are
 canonical-form choices that match Docmost's own serializer - `-` bullets, ATX `#` headings, fenced
-code, two spaces of indent per nested-list level, and `:::type` callouts - plus position-aware
-escaping of characters that would otherwise be re-read as structure. It is canonicalization, not
+code, marker-width indent per nested-list level (two spaces under a bullet, three under an ordered
+item), and `:::type` callouts - plus position-aware escaping of characters that would otherwise be
+re-read as structure. It is canonicalization, not
 data loss. See the Data Models page (revision hash) for how it is produced.
 
 ## Replica git autosync (optional)

@@ -97,8 +97,10 @@ inbound markdown with the `marked` parser (`breaks: true`) plus its callout/math
 bridge renderer (`app/query/prosemirror.py`) is the faithful inverse of that ingest: it emits the
 markdown that re-imports to the same ProseMirror tree, matching the conventions of Docmost's own
 serializer - ATX `#` headings, `-` bullets, `N.` ordered lists, fenced code, `---` rules, `- [x]`
-task items, `:::type` callouts, inline math (`$...$`) and block math (double-dollar), and a uniform two-space indent per
-nested-list level. So structure round-trips: nested lists stay nested, tables keep their columns,
+task items, `:::type` callouts, inline math (`$...$`) and block math (double-dollar), and
+marker-width indent per nested-list level - two spaces under a `-` bullet or task item, three under a
+`1.` ordered item, widening with the marker (four under `10.`), so a nested ordered list re-imports
+nested instead of flattening. So structure round-trips: nested lists stay nested, tables keep their columns,
 callouts keep their type. Escaping is position-aware - a token is escaped only where the parser
 would read it as structure at that position (a leading `-`/`#`/`>`/`N.`, a literal `|` inside a
 table cell, emphasis runs in prose, code via backtick-run escalation) - so ordinary prose keeps its
