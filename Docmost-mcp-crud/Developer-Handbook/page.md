@@ -26,25 +26,25 @@ All configuration is environment-driven; there is no hardcoding in application c
 four distinct places by audience:
 
 1. Server `.env` (on the Docmost host, read by the containers). Docmost DB (read path), bridge DB
-  (version state), Docmost app URL + write credentials, network/bind/ports, worker interval, mode,
-  log level. Full table on the Configuration page. Copy `env.example` to `.env` and fill real
-  values.
+   (version state), Docmost app URL + write credentials, network/bind/ports, worker interval, mode,
+   log level. Full table on the Configuration page. Copy `env.example` to `.env` and fill real
+   values.
 2. Helper `helper/.env` (on the client machine). `DOCMOST_MCP_SERVER_URL` (required - the server
-  base URL the helper calls) and optional `DOCMOST_REPLICA_BASE` (the directory the helper scans
-  for replicas by `_replica.json` space id; defaults to the helper process cwd, so it is normally
-  left unset and the helper simply runs inside the repo).
+   base URL the helper calls) and optional `DOCMOST_REPLICA_BASE` (the directory the helper scans
+   for replicas by `_replica.json` space id; defaults to the helper process cwd, so it is normally
+   left unset and the helper simply runs inside the repo).
 3. Client shell environment via direnv `.envrc` (per repo). Loaded when you enter the repo and
-  inherited by Claude Code and therefore by the helper process. Holds `GIT_SSH_COMMAND` (the repo's
-  git deploy key, used for normal git and for replica autosync pushes), `CLAUDE_CONFIG_DIR` (which
-  Claude home this repo uses), and optionally the autosync enable flag
-  `DOCMOST_REPLICA_GIT_AUTOSYNC`.
+   inherited by Claude Code and therefore by the helper process. Holds `GIT_SSH_COMMAND` (the repo's
+   git deploy key, used for normal git and for replica autosync pushes), `CLAUDE_CONFIG_DIR` (which
+   Claude home this repo uses), and optionally the autosync enable flag
+   `DOCMOST_REPLICA_GIT_AUTOSYNC`.
 4. MCP registration (the documented Claude Code channel). The `docmost-helper` stdio entry under
-  `mcpServers` in the Claude home's `.claude.json` (user scope) - `command` is this repo's
-  `helper/.venv/bin/python` running `helper/server.py` (absolute paths, so a home-scope entry works
-  from any directory). The entry's `env` object is how per-repo helper values are passed; this is
-  where `DOCMOST_REPLICA_AUTOSYNC_ROOTS` (the autosync origin scope) is declared. The repo's
-  `.mcp.json` (project scope) is intentionally empty (`{"mcpServers": {}}`) and gitignored; skills
-  and the helper registration live in the Claude home, not the repo. See claude-mcp-setup.
+   `mcpServers` in the Claude home's `.claude.json` (user scope) - `command` is this repo's
+   `helper/.venv/bin/python` running `helper/server.py` (absolute paths, so a home-scope entry works
+   from any directory). The entry's `env` object is how per-repo helper values are passed; this is
+   where `DOCMOST_REPLICA_AUTOSYNC_ROOTS` (the autosync origin scope) is declared. The repo's
+   `.mcp.json` (project scope) is intentionally empty (`{"mcpServers": {}}`) and gitignored; skills
+   and the helper registration live in the Claude home, not the repo. See claude-mcp-setup.
 
 Autosync env (read by the helper from its process environment, so either the MCP `env` object or
 `.envrc` works; declare the origin scope via the MCP `env` channel):
@@ -80,18 +80,18 @@ Normal work is reconcile-first; the model only initiates a sync and the helper p
 diffing, versioning, and file IO.
 
 1. Edit `page.md` locally and/or move page directories to restructure the hierarchy (a page's parent
-  is derived from its directory nesting).
+   is derived from its directory nesting).
 2. Call `sync_space(space_id)` - or `sync_page(space_id, page_id)` /
-  `sync_page_tree(space_id, parent_page_id)` - with only the id(s).
+   `sync_page_tree(space_id, parent_page_id)` - with only the id(s).
 3. The helper reconciles in one pass (push edits, create local-only pages, pull remote changes,
-  materialize new remote pages, apply moves) and returns a summary: `synced_count` (already in
-  sync) + `applied_count` / `applied[]` (changed this run, metadata only - page content is written
-  to your local files, not returned) plus only the items needing a decision: `conflicts[]` (each
-  with `remote_content` / `local_content` / diff) and `deletion_confirmations[]`. Confirm a change
-  via `applied_count` / `errors[]`, not `synced_count`.
+   materialize new remote pages, apply moves) and returns a summary: `synced_count` (already in
+   sync) + `applied_count` / `applied[]` (changed this run, metadata only - page content is written
+   to your local files, not returned) plus only the items needing a decision: `conflicts[]` (each
+   with `remote_content` / `local_content` / diff) and `deletion_confirmations[]`. Confirm a change
+   via `applied_count` / `errors[]`, not `synced_count`.
 4. Resolve a conflict with `resolve_conflict(space_id, page_id, merged_content)`; apply a deletion
-  with `confirm_deletion(space_id, page_id, direction)`. Ask the user when a merge or deletion is
-  unclear. Never force.
+   with `confirm_deletion(space_id, page_id, direction)`. Ask the user when a merge or deletion is
+   unclear. Never force.
 
 `resync_space(space_id)` is the occasional whole-space variant: it re-renders EVERY page from
 Docmost on the server (even unchanged ones) then runs the same two-way reconcile, so a server-side
@@ -150,10 +150,10 @@ When a restart is needed:
 Restart the helper (one of):
 
 1. Restart Claude Code (exit and relaunch the CLI from the repo, with direnv active so `.envrc` and
-  the MCP config load). This re-spawns the `docmost-helper` subprocess with the new code and env.
+   the MCP config load). This re-spawns the `docmost-helper` subprocess with the new code and env.
 2. Or, in a running session, reconnect MCP with the `/mcp` command (re-establishes the stdio
-  transport). After a server rebuild, treat a `Session not found` message as stale transport, not
-  missing content - reconnect.
+   transport). After a server rebuild, treat a `Session not found` message as stale transport, not
+   missing content - reconnect.
 
 Verify the helper reloaded: the new tools/behavior are present (for example
 `mcp__docmost-helper__*` tools list cleanly), and for autosync, a sync now also commits + pushes the
