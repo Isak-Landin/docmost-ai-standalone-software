@@ -76,6 +76,38 @@ def test_no_underscore_is_passthrough():
     assert esc(s) == s
 
 
+# --- HTML tags: escape non-schema tags, pass through the 5 Docmost parses ----------------------
+
+def test_unsupported_html_tag_escaped():
+    # tiptap drops <article>/<div> (and merges neighbours) -> escape so it survives as literal text.
+    assert esc("A card is an <article> wrapper") == "A card is an \\<article> wrapper"
+    assert esc("<div class=x>body</div>") == "\\<div class=x>body\\</div>"
+
+
+def test_supported_html_tags_pass_through():
+    # The 5 tags Docmost parses back to a node/mark (and the egress emits) must NOT be escaped.
+    assert esc("<u>under</u> and <sup>2</sup>") == "<u>under</u> and <sup>2</sup>"
+    assert esc("<details><summary>s</summary>body</details>") == \
+        "<details><summary>s</summary>body</details>"
+
+
+def test_anchor_tag_escaped_to_literal():
+    # The egress never emits raw <a>; a literal <a ...> is documentation kept literal (this was the
+    # HostNodex page's spurious-link corruption).
+    assert esc("see <a class=plan-card href=/y>link</a> here") == \
+        "see \\<a class=plan-card href=/y>link\\</a> here"
+
+
+def test_html_idempotent_and_code_safe():
+    assert esc(esc("<article>x</article>")) == esc("<article>x</article>")
+    assert esc("`<article>`") == "`<article>`"            # inline code: verbatim
+    assert esc("```\n<article>\n```") == "```\n<article>\n```"  # fenced code: verbatim
+
+
+def test_bare_angle_in_prose_untouched():
+    assert esc("if a < b and c > d then") == "if a < b and c > d then"
+
+
 def test_empty_and_none_safe():
     assert esc("") == ""
     assert esc(None) is None

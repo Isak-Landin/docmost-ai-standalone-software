@@ -1,22 +1,27 @@
-"""Make outgoing markdown safe for Docmost's `marked` ingest (the write half of ISSUE-2).
+"""Make outgoing markdown safe for Docmost's `marked` ingest (the write half of the conversion gate).
 
-Docmost parses page content sent with `format:"markdown"` using `marked` (CommonMark + extensions).
-Flanking `_`/`__` that are NOT inside a code span are read as emphasis, so an unescaped code/path
-token such as `app/__init__.py` is stored as bold `init` and read back as `app/**init**.py`.
+Docmost parses page content sent with `format:"markdown"` in two stages: `marked` (CommonMark +
+breaks:true + callout/math extensions) renders it to HTML, then tiptap's `DOMParser` builds the
+ProseMirror tree against Docmost's schema. Two ingest hazards corrupt content silently, so this
+module neutralises both on the way OUT, mirroring the egress renderer in `app/query/prosemirror.py`:
 
-The bridge's egress renderer (`app/query/prosemirror.py`) already enforces a single convention on
-the way OUT: emphasis is emitted only as `*`/`**` (`_apply_marks`) and literal flanking `_`/`__` in
-text is escaped to `\\_\\_` (`_escape_inline` / `_UNDER_RUN`). This module applies the SAME
-convention on the way IN, so the write path stops letting `marked` impose its own dialect. That
-makes the round-trip symmetric: a literal `app/__init__.py` stays literal end to end.
+1. Flanking `_`/`__` outside code are read by `marked` as emphasis, so a code/path token such as
+   `app/__init__.py` would be stored as bold `init` and read back as `app/**init**.py`. The egress
+   renderer already emits emphasis only as `*`/`**` and escapes literal flanking `_`/`__`; this
+   applies the SAME convention on the way in, so a literal `app/__init__.py` stays literal end to end.
+2. Raw HTML tags. tiptap's `DOMParser` keeps only tags its schema has a parse rule for and SILENTLY
+   DROPS the rest, merging their neighbours into a paragraph -- a block wrapper like `<article>` /
+   `<div>` takes whole sections with it (the observed empty-`##`-heading data loss). So every HTML
+   tag is escaped to literal text EXCEPT the handful Docmost parses back to a node/mark, which the
+   egress renderer itself emits: <u>/<sup>/<sub>/<details>/<summary>.
 
 Properties:
 - Position-aware: never touches inline-code spans or fenced code blocks (their content is literal to
-  `marked` already, and emphasis markers there are intentional).
-- Idempotent: an already-escaped `\\_` is never re-escaped (the `(?<!\\)` guard), so re-pushing the
-  canonical read-back form is a no-op and the reconcile/revision-hash stays stable.
-- Minimal: only flanking `_`/`__` are escaped. `*`/`**` emphasis, backticks, links and structural
-  block markers are left untouched (escaping those would corrupt intentional formatting).
+  `marked` already, so emphasis markers and `<tags>` there are intentional).
+- Idempotent: an already-escaped `\\_` or `\\<` is never re-escaped (the `(?<!\\)` guard), so
+  re-pushing the canonical read-back form is a no-op and the reconcile/revision-hash stays stable.
+- Minimal: only flanking `_`/`__` and non-schema HTML tags are escaped. `*`/`**` emphasis, backticks,
+  links and structural block markers are left untouched (escaping those would corrupt formatting).
 """
 
 from __future__ import annotations
@@ -32,6 +37,14 @@ _FLANKING_UNDERSCORE = re.compile(
 # A line that opens or closes a fenced code block: optional indent then a run of >= 3 ` or ~.
 _FENCE = re.compile(r"^(\s*)(`{3,}|~{3,})")
 
+# HTML tags Docmost's schema parses back to a node/mark (the egress emits exactly these), so they
+# pass through to be parsed; every other tag is escaped to literal text. An unmatched tag is
+# silently dropped by tiptap's DOMParser and its neighbours merged into a paragraph (the
+# section-drop data loss), so an unsupported raw tag like <article>/<div> must never reach `marked`
+# unescaped. Only a COMPLETE tag/comment matches -- a bare `<` in prose ("a < b") is left alone.
+_INGEST_HTML_ALLOWED = {"u", "sup", "sub", "details", "summary"}
+_HTML_TAGISH = re.compile(r"(?<!\\)<(?:/?([A-Za-z][A-Za-z0-9-]*)(?:\s[^<>]*?)?/?>|!--)")
+
 
 def _escape_underscore_runs(text: str) -> str:
     def _esc(m: re.Match) -> str:
@@ -40,6 +53,23 @@ def _escape_underscore_runs(text: str) -> str:
         return escaped_delim + inner + escaped_delim
 
     return _FLANKING_UNDERSCORE.sub(_esc, text)
+
+
+def _escape_html_tags(text: str) -> str:
+    """Escape the leading `<` of any HTML tag/comment not in the schema allowlist, so `marked`
+    keeps it as literal text instead of letting tiptap drop it (and its neighbours)."""
+    def _esc(m: re.Match) -> str:
+        name = (m.group(1) or "").lower()
+        if name in _INGEST_HTML_ALLOWED:
+            return m.group(0)  # supported tag: let Docmost parse it back to a node/mark
+        return "\\" + m.group(0)
+
+    return _HTML_TAGISH.sub(_esc, text)
+
+
+def _escape_text_segment(text: str) -> str:
+    """Escape both ingest hazards (flanking `_`/`__` and non-schema HTML tags) in non-code text."""
+    return _escape_html_tags(_escape_underscore_runs(text))
 
 
 def _escape_outside_inline_code(line: str) -> str:
@@ -57,23 +87,24 @@ def _escape_outside_inline_code(line: str) -> str:
                 out.append(line[i:close + len(run)])  # code span: verbatim
                 i = close + len(run)
             else:
-                out.append(_escape_underscore_runs(line[i:]))  # unmatched ` -> literal text
+                out.append(_escape_text_segment(line[i:]))  # unmatched ` -> literal text
                 i = n
         else:
             k = line.find("`", i)
             if k == -1:
-                out.append(_escape_underscore_runs(line[i:]))
+                out.append(_escape_text_segment(line[i:]))
                 i = n
             else:
-                out.append(_escape_underscore_runs(line[i:k]))
+                out.append(_escape_text_segment(line[i:k]))
                 i = k
     return "".join(out)
 
 
 def escape_markdown_for_ingest(md: str) -> str:
-    """Escape flanking `_`/`__` outside code (spans + fences), idempotently, so Docmost's `marked`
-    stores them as literal text instead of emphasis. Mirrors the egress renderer's convention."""
-    if not md or ("_" not in md):
+    """Escape the two ingest hazards outside code (inline spans + fenced blocks), idempotently, so
+    Docmost stores them as authored: flanking `_`/`__` (else read as emphasis) and non-schema HTML
+    tags (else dropped by tiptap, taking neighbours with them). Mirrors the egress renderer."""
+    if not md or ("_" not in md and "<" not in md):
         return md
     out: list[str] = []
     in_fence = False

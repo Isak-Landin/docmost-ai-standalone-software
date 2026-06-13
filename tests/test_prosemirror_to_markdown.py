@@ -90,8 +90,23 @@ def test_ordered_list_respects_start_attr():
 
 
 def test_mixed_ordered_with_nested_bullet():
+    # A child under an ordered item must reach the ordered marker's content column (3 for "1. "),
+    # so the nested bullet is indented 3 spaces, not 2.
     d = doc(ordered(li(para("Step"), bullet(li(para("sub"))))))
-    assert render(d) == "1. Step\n  - sub"
+    assert render(d) == "1. Step\n   - sub"
+
+
+def test_nested_ordered_uses_marker_width_indent():
+    # marked nests a child ordered list only at the parent marker's content column (3 for "1. ");
+    # a 2-space indent silently flattens it on re-ingest (the headline ordered-list defect).
+    d = doc(ordered(li(para("top"), ordered(li(para("nested A")), li(para("nested B"))))))
+    assert render(d) == "1. top\n   1. nested A\n   2. nested B"
+
+
+def test_nested_ordered_double_digit_marker_widens_indent():
+    # "10. " is 4 cols, so its child list must be indented 4 spaces (the marker width), not 3.
+    d = doc(ordered(li(para("nine")), li(para("ten"), ordered(li(para("child")))), start=9))
+    assert render(d) == "9. nine\n10. ten\n    1. child"
 
 
 def test_task_list_preserves_checkboxes():
@@ -116,6 +131,18 @@ def test_callout_uses_colon_fence_with_type():
 def test_callout_defaults_to_info():
     d = doc({"type": "callout", "content": [para("note")]})
     assert render(d) == ":::info\nnote\n:::"
+
+
+# --- Math: LaTeX is stored under attrs["text"], not attrs["latex"] -------------
+
+def test_math_inline_renders_latex_from_text_attr():
+    d = doc(para(text("x "), {"type": "mathInline", "attrs": {"text": "a^2 + b^2\n"}}))
+    assert render(d) == "x $a^2 + b^2$"
+
+
+def test_math_block_renders_latex_from_text_attr():
+    d = doc({"type": "mathBlock", "attrs": {"text": "\\int_0^1 x dx\n"}})
+    assert render(d) == "$$\n\\int_0^1 x dx\n$$"
 
 
 # --- Code: fence + backtick-run escalation -------------------------------------
@@ -202,6 +229,24 @@ def test_intraword_emphasis_pair_is_escaped():
 
 def test_literal_link_opener_is_escaped():
     assert render(doc(para("see [docs](http://x) here"))) == "see \\[docs](http://x) here"
+
+
+# --- Literal HTML tags: escape so tiptap does not drop them (and their neighbours) -------------
+
+def test_literal_html_tag_in_text_is_escaped():
+    assert render(doc(para("a card <article> wrapper"))) == "a card \\<article> wrapper"
+    assert render(doc(para("use <a class=btn href=/x>link</a>"))) == \
+        "use \\<a class=btn href=/x>link\\</a>"
+
+
+def test_underline_wrapper_emitted_but_literal_tag_inside_is_escaped():
+    # The <u> wrapper is added after text escaping; a literal tag in the text is still escaped.
+    assert render(doc(para(text("x", marks=[{"type": "underline"}])))) == "<u>x</u>"
+    assert render(doc(para(text("<b>", marks=[{"type": "underline"}])))) == "<u>\\<b></u>"
+
+
+def test_bare_angle_bracket_in_prose_not_escaped():
+    assert render(doc(para("if a < b then c > d"))) == "if a < b then c > d"
 
 
 # --- The no-spurious-escaping guarantee (clean prose stays clean) --------------

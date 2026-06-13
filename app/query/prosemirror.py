@@ -8,7 +8,9 @@ the conventions of Docmost's own `turndown` serializer (the proven inverse of it
 importer):
 
 - ATX headings, `-` bullets, `N.` ordered lists, fenced code, `---` thematic rules.
-- A uniform 2-space indent per nested-list level (NOT marker-width).
+- Nested-list indent tracks the parent MARKER WIDTH (2 for `- `/task items, >=3 for `N. `
+  ordered), because `marked` only nests a child whose indent reaches the parent's content
+  column; a flat 2-space indent silently flattens ordered nesting on re-ingest.
 - `- [x] ` / `- [ ] ` task items; `:::<type>` callouts; `$...$` / `$$...$$` math.
 - GFM tables / strikethrough.
 
@@ -19,15 +21,17 @@ Escaping is POSITION-AWARE: a markdown token is escaped only where the ingest gr
 parse it as structure at that position (a `-` only at line start, `|` only inside a table cell,
 `*`/`_` only when they flank into an emphasis run, code via backtick-run escalation). Ordinary
 prose keeps its punctuation un-escaped so the local replica markdown stays clean.
+
+A literal HTML-ish tag in text (`<article>`, `<a ...>`) is escaped too: tiptap's DOMParser drops
+any tag outside Docmost's schema and merges its neighbours into a paragraph, so an unescaped tag
+silently destroys surrounding content on re-ingest. The renderer's own intentional tag wrappers
+(`<u>`/`<sup>`/`<sub>`/`<details>`) are added AFTER text escaping, so they are not affected.
 """
 
 from __future__ import annotations
 
 import re
 from typing import Any
-
-# Two spaces per nested level, matching Docmost's turndown (`replace(/\n/gm, '\n  ')`).
-_INDENT = "  "
 
 
 def prosemirror_to_markdown(doc: dict[str, Any]) -> str:
@@ -124,11 +128,13 @@ def _render_node(node: dict[str, Any]) -> str:
         return f":::{ctype}\n{inner}\n:::\n\n"
 
     if node_type == "mathInline":
-        text = attrs.get("latex") or _render_inline(children)
+        # Docmost stores the LaTeX under attrs["text"] (older builds used "latex"); the stored
+        # value carries a trailing newline, so strip before wrapping. Empty -> render children.
+        text = (attrs.get("latex") or attrs.get("text") or _render_inline(children)).strip()
         return f"${text}$"
 
     if node_type == "mathBlock":
-        text = attrs.get("latex") or _render_inline(children)
+        text = (attrs.get("latex") or attrs.get("text") or _render_inline(children)).strip()
         return f"$$\n{text}\n$$\n\n"
 
     if node_type == "youtube":
@@ -162,15 +168,20 @@ def _render_inline(nodes: list[dict]) -> str:
 
 # ---------------------------------------------------------------------------
 # Lists — indentation depth is threaded by indenting an item's continuation
-# lines (which include any nested list) by one 2-space level. Recursion makes
-# this accumulate to the correct depth.
+# lines (which include any nested list) to the parent marker's width. Recursion
+# makes this accumulate to the correct depth.
 # ---------------------------------------------------------------------------
 
 def _indent_continuation(item_text: str, marker: str) -> str:
-    """Put the first line on the marker line; indent every later line by one level."""
+    """Put the first line on the marker line; indent every continuation line (which includes any
+    nested list) to the parent marker's width. `marked` nests a child list only when its indent
+    reaches the parent marker's content column, so the indent MUST track the marker width: 2 for
+    `- `/task items, 3+ for `N. ` ordered markers. A flat 2-space indent silently flattens ordered
+    nesting on re-ingest."""
+    indent = " " * len(marker)
     item_lines = item_text.split("\n")
     first = marker + (item_lines[0] if item_lines else "")
-    rest = [(_INDENT + line) if line.strip() else "" for line in item_lines[1:]]
+    rest = [(indent + line) if line.strip() else "" for line in item_lines[1:]]
     return "\n".join([first] + rest)
 
 
@@ -301,6 +312,11 @@ _STAR_RUN = re.compile(r"(\*\*|\*|~~)(\S(?:.*?\S)?|\S)\1")
 _UNDER_RUN = re.compile(r"(?<![0-9A-Za-z])(__|_)(\S(?:.*?\S)?|\S)\1(?![0-9A-Za-z])")
 # A `[text](` or `[text][` link/reference opener in literal text.
 _LINK_OPEN = re.compile(r"\[([^\]]*)\](?=[\(\[])")
+# A complete HTML-ish tag or comment in literal text. In a TEXT node every tag is literal (real
+# marks/nodes never appear as text), and tiptap's DOMParser DROPS any tag its schema cannot parse
+# (merging neighbours into a paragraph), so the leading `<` is escaped to keep the token literal on
+# re-ingest. A bare `<` in prose ("a < b") forms no complete tag, so it is left untouched.
+_HTML_TAGISH = re.compile(r"</?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*?)?/?>|<!--")
 
 
 def _escape_inline(text: str) -> str:
@@ -322,6 +338,7 @@ def _escape_inline(text: str) -> str:
     text = _STAR_RUN.sub(_esc_delims, text)
     text = _UNDER_RUN.sub(_esc_delims, text)
     text = _LINK_OPEN.sub(lambda m: "\\[" + m.group(1) + "]", text)
+    text = _HTML_TAGISH.sub(lambda m: "\\" + m.group(0), text)
     return text
 
 
