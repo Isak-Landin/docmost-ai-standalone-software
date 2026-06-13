@@ -125,14 +125,18 @@ the Docmost-to-local sync stays manual. So replica edits may already be committe
 
 - After a sync, a page's local `page.md` settles to Docmost's canonical, structure-preserving
   rendering (the basis of the revision hash). It differs from your typed bytes only in canonical-form
-  choices (for example `-` bullets, ATX headings, fenced code, two-space nested-list indent), never
-  in structure. Treat the post-sync form as the source of truth.
-- Ingest asymmetries (Docmost owns markdown parsing; the bridge egress cannot prevent these).
-  Backtick code and paths so they render literally instead of being parsed:
-  - A literal double-dollar or a bare single-dollar pair is grabbed by Docmost's math extension on
-    ingest. Describe math in prose or backtick it.
-  - Double-underscore around a word (the `dunder` style used in Python module names) is parsed as
-    bold. Write such references inside backticks; unbackticked they round-trip as bold asterisks.
+  choices (for example `-` bullets, ATX headings, fenced code, marker-width nested-list indent - two
+  spaces under a bullet, three under an ordered item), never in structure. Treat the post-sync form
+  as the source of truth.
+- Write-path escaping now neutralizes the former ingest asymmetries automatically. On the way out
+  the bridge escapes the tokens Docmost's `marked` would otherwise mis-read outside code: flanking
+  `_`/`__` (so `app/__init__.py` stays literal instead of becoming bold `init`) and non-schema HTML
+  tags (so a stray `<article>` or `<div>` survives as literal text instead of being dropped together
+  with its neighbours). These no longer need manual backticking to round-trip.
+- One ingest residual remains, owned by Docmost's own parser and not preventable by the egress: a
+  literal double-dollar or a bare single-dollar pair is grabbed by Docmost's math extension on
+  ingest. Describe math in prose or backtick it. A related input limitation (an ordered list authored
+  at a two-space indent is not auto-renested) is covered on the Known Limitations page.
 - Use plain ASCII punctuation; no Unicode em-dashes, curly quotes, or ellipsis characters.
 
 ## Restarting (exact procedures)
@@ -184,8 +188,9 @@ Restart the bridge:
 - Deploy a helper change: push; restart the helper (no bridge rebuild).
 - Troubleshooting: helper cannot find a replica - it scans `DOCMOST_REPLICA_BASE` (default cwd) for a
   matching `_replica.json`; pass an explicit `local_root` only when discovery is ambiguous.
-  `Session not found` after a rebuild - reconnect MCP. A page that came back as bold/odd text - check
-  for an unbackticked dunder or dollar pair in the source (ingest asymmetry).
+  `Session not found` after a rebuild - reconnect MCP. A page that came back as odd text - a literal
+  `$` or double-dollar pair was taken by Docmost's math extension (backtick it); flanking `_`/`__` and
+  stray HTML tags are now escaped automatically on the write path. See Known Limitations.
 
 ## Recommended practices
 
@@ -201,4 +206,4 @@ Restart the bridge:
 ## Deep-dive index
 
 Overview, Architecture, Configuration, MCP Server, REST API, Database Layer, Data Models, Helper,
-Replica System, Deployment, claude-mcp-setup, Release.
+Replica System, Deployment, claude-mcp-setup, Known Limitations, Release.
