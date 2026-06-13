@@ -7,5 +7,6 @@
   "position": "a50C6",
   "base_revision_hash": "1b28ab1cafe399d424c96c31a51d3a1f4a8b3782303ce67d7cc62ce84275d64f",
   "content_file_path": "Docmost-mcp-crud/REST-API/page.md",
-  "meta_file_path": "Docmost-mcp-crud/REST-API/_meta.json"
+  "meta_file_path": "Docmost-mcp-crud/REST-API/_meta.json",
+  "base_version_id": "05f52660-cd6d-41be-8e83-2aabd0022b54"
 }

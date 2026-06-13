@@ -7,5 +7,6 @@
   "position": "aA3KO",
   "base_revision_hash": "64ed65eb769e66e14712554534c4e272d9abdff8a05db99700f01268b8181055",
   "content_file_path": "Docmost-mcp-crud/claude-mcp-setup/page.md",
-  "meta_file_path": "Docmost-mcp-crud/claude-mcp-setup/_meta.json"
+  "meta_file_path": "Docmost-mcp-crud/claude-mcp-setup/_meta.json",
+  "base_version_id": "30c5ab1c-ed0b-43a4-826e-ab415af9f922"
 }
