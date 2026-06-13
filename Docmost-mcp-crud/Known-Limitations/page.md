@@ -9,7 +9,7 @@ renderer; one is a deliberately deferred input normalization.
 
 Docmost ingests markdown with `marked` (breaks:true), which nests a child list only when the child
 is indented to the parent marker's content width: a bullet marker (`- `) is two columns, but an
-ordered marker (`1. `) is three (and `10. `is four). So an ordered sub-list indented only two spaces
+ordered marker (`1. `) is three, and `10.` is four. So an ordered sub-list indented only two spaces
 falls outside its parent item and `marked` flattens it - the sub-items are folded into the parent as
 line breaks plus literal `1.` / `2.` text instead of a nested list.
 
@@ -63,6 +63,29 @@ ingest and turns it into a math node; the egress renderer cannot prevent this be
 parse. Write math you mean as math, and backtick or describe in prose any dollar amounts or literal
 delimiters you do NOT want parsed (for example a price). Block and inline math that you DO intend
 round-trip correctly.
+
+## Inline code spans with edge whitespace
+
+Docmost's ingest collapses whitespace at the boundary of an inline code span (markdown to HTML to
+ProseMirror). A code span whose content ends with a space, immediately followed by a space and a
+word, loses that outer space - the parser stores the following text without its leading space. For
+example this input:
+
+```
+the `10. ` marker
+
+```
+
+is stored and read back as:
+
+```
+the `10. `marker
+
+```
+
+The result is stable and idempotent (re-pushing it is a no-op, so it does not churn or diverge), but
+it is lossy. Do not rely on a space sitting directly next to a code span that carries its own edge
+whitespace; follow such a span with punctuation, or drop the trailing space inside it.
 
 ## Node types with no verified markdown syntax
 
