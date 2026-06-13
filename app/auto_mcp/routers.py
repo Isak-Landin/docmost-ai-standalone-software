@@ -63,6 +63,8 @@ def apply_page_operations(space_id: UUID, body: AutoPageWriteBatchIn) -> AutoPag
                     applied=True,
                     message="Bridge write applied.",
                     base_revision_hash=result.base_revision_hash,
+                    base_version_id=result.base_version_id,
+                    content=result.content,
                 )
             )
         except BridgeConflictError as exc:

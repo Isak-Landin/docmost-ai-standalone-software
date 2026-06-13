@@ -5,6 +5,7 @@ from uuid import UUID
 
 from app.bridge.db.connection import get_conn
 from app.bridge.repositories.page_heads import get_page_head, list_page_heads_for_space
+from app.bridge.repositories.page_versions import revision_hashes_by_version_for_space
 from app.bridge.schemas.state import PageHeadRecord
 from app.bridge.services.bootstrap import ensure_space_bootstrapped
 from app.bridge.services.versioning import revision_hash
@@ -113,6 +114,7 @@ def reconcile(space_id: UUID, request: ReconcileIn) -> ReconcileOut:
     with get_conn() as conn:
         with conn.cursor() as cur:
             all_heads = list_page_heads_for_space(cur, space_id)
+            versions_by_id = revision_hashes_by_version_for_space(cur, space_id)
     heads_by_id = {h.page_id: h for h in all_heads}
     scoped_ids = _scoped_page_ids(request, all_heads)
 
@@ -128,7 +130,7 @@ def reconcile(space_id: UUID, request: ReconcileIn) -> ReconcileOut:
 
     # (2) tracked local pages -> classify + apply
     for pid, page in local_by_id.items():
-        _reconcile_tracked(space_id, page, heads_by_id.get(pid), tree_by_id.get(pid), out)
+        _reconcile_tracked(space_id, page, heads_by_id.get(pid), tree_by_id.get(pid), versions_by_id, out)
 
     # (3) bridge pages in scope but not present locally
     for pid in scoped_ids:
@@ -161,6 +163,7 @@ def reconcile(space_id: UUID, request: ReconcileIn) -> ReconcileOut:
                     position=head.position,
                     icon=head.icon,
                     base_revision_hash=head.current_revision_hash,
+                    base_version_id=head.current_version_id,
                     content=head.content,
                 )
             )
@@ -237,6 +240,7 @@ def _conflict_item(page: ReconcilePageIn, head: PageHeadRecord | None, reason: s
         title=page.title,
         reason=reason,
         base_revision_hash=page.base_revision_hash,
+        base_version_id=page.base_version_id,
         local_version=revision_hash(page.title, page.content),
         remote_version=head.current_revision_hash if head else None,
         local_content=page.content,
@@ -250,6 +254,7 @@ def _reconcile_tracked(
     page: ReconcilePageIn,
     head: PageHeadRecord | None,
     node: ReconcileTreeNodeIn | None,
+    versions_by_id: dict[tuple[str, str], str],
     out: ReconcileOut,
 ) -> None:
     pid = page.page_id
@@ -280,6 +285,10 @@ def _reconcile_tracked(
         return
 
     base = page.base_revision_hash
+    if base is None and page.base_version_id is not None:
+        # Version-id heal (1b): the helper carries an opaque base pointer; when the local base
+        # hash is absent the server resolves it from its OWN version store (server owns the chain).
+        base = versions_by_id.get((str(pid), str(page.base_version_id)))
     head_hash = head.current_revision_hash
 
     # --- classify ---
@@ -349,7 +358,7 @@ def _reconcile_tracked(
 
     if not any_local and not any_remote:
         out.synced.append(
-            ReconcileSyncedItem(page_id=pid, local_path=page.local_path, base_revision_hash=head_hash)
+            ReconcileSyncedItem(page_id=pid, local_path=page.local_path, base_revision_hash=head_hash, base_version_id=head.current_version_id)
         )
         return
 
@@ -377,6 +386,7 @@ def _reconcile_tracked(
             position=head2.position,
             icon=head2.icon,
             base_revision_hash=head2.current_revision_hash,
+            base_version_id=head2.current_version_id,
             content=content,
         )
     )

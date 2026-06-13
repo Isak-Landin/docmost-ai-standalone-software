@@ -30,6 +30,7 @@ class BridgeWriteResult:
     parent_page_id: UUID | None
     content: str
     base_revision_hash: str
+    base_version_id: UUID | None
     remote_updated_at: datetime | None
     action: str
     caller_mode: str

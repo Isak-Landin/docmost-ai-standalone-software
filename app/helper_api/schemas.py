@@ -28,6 +28,7 @@ class HelperPageOut(BaseModel):
     position: Optional[str] = None
     icon: Optional[str] = None
     current_revision_hash: Optional[str] = None
+    current_version_id: Optional[UUID] = None
 
 
 class HelperPageTreeNodeOut(BaseModel):
@@ -73,6 +74,7 @@ class HelperPageWriteOut(BaseModel):
     parent_page_id: Optional[UUID] = None
     slug_id: Optional[str] = None
     base_revision_hash: Optional[str] = None
+    base_version_id: Optional[UUID] = None
 
 
 class HelperSpaceCreateIn(BaseModel):

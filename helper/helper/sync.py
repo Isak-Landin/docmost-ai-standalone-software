@@ -18,6 +18,7 @@ from helper.client import (
     list_pages,
     observe,
     reconcile as client_reconcile,
+    resolve_auto_conflict,
     resolve_conflict_remote,
 )
 from helper.replica import (
@@ -89,6 +90,9 @@ def push_pages(
         lp = item.get("local_path")
         if not lp or not item.get("applied"):
             continue
+        content = item.get("content")
+        if content is not None:
+            write_page(lp, content)  # settle local file to canonical (anchor honesty)
         update_meta_after_sync(lp, item, space_id=str(space_id))
         _auto_expire_stash(space_id, lp, item.get("base_revision_hash"))
 
@@ -241,6 +245,8 @@ def _build_reconcile_payload(root: str, include_ids: set[str] | None = None) -> 
             entry["page_id"] = str(pid)
         if meta.get("base_revision_hash"):
             entry["base_revision_hash"] = meta["base_revision_hash"]
+        if meta.get("base_version_id"):
+            entry["base_version_id"] = meta["base_version_id"]
         parent = _local_parent_id(lp, id_by_dir, root)
         if parent:
             entry["parent_page_id"] = parent
@@ -289,8 +295,15 @@ def _refresh_synced_base(root: str, item: dict[str, Any]) -> None:
     if not lp:
         return
     meta = read_meta(lp)
+    base_version_id = item.get("base_version_id")
+    changed = False
     if meta.get("base_revision_hash") != base:
         meta["base_revision_hash"] = base
+        changed = True
+    if base_version_id is not None and meta.get("base_version_id") != str(base_version_id):
+        meta["base_version_id"] = str(base_version_id)
+        changed = True
+    if changed:
         write_meta(lp, meta)
 
 
@@ -360,6 +373,8 @@ def _write_meta_from_item(local_path: str, space_id: UUID, item: dict[str, Any])
         meta["icon"] = item["icon"]
     if item.get("base_revision_hash"):
         meta["base_revision_hash"] = item["base_revision_hash"]
+    if item.get("base_version_id"):
+        meta["base_version_id"] = str(item["base_version_id"])
     meta["content_file_path"] = local_path
     meta["meta_file_path"] = os.path.join(os.path.dirname(local_path), "_meta.json")
     write_meta(local_path, meta)
@@ -394,6 +409,14 @@ def accept_remote(
     local_path: str,
     local_root: str | None = None,
 ) -> dict[str, Any]:
+    # Fold any live Docmost state into the bridge head first, so the returned content and its
+    # current_revision_hash/current_version_id come from one consistent snapshot (anchor honesty):
+    # otherwise a stale head would anchor the local base to a hash that does not match the bytes
+    # written here, which is exactly the drift that seeds ISSUE-3.
+    try:
+        observe(space_id)
+    except Exception:
+        pass  # best-effort freshness; we still take the current head below
     page = get_page(space_id, page_id)
     write_page(local_path, page.get("content") or "")
     update_meta_after_pull(local_path, page)
@@ -544,9 +567,15 @@ def resolve_conflict(
     meta = read_meta(lp)
     if res.get("base_revision_hash"):
         meta["base_revision_hash"] = res["base_revision_hash"]
+    if res.get("base_version_id"):
+        meta["base_version_id"] = str(res["base_version_id"])
     write_meta(lp, meta)
     consume_stash(space_id, page_id, stash["snapshot_id"], local_path=lp)
     write_tree_snapshot(root, _current_tree_entries(root))
+    try:
+        resolve_auto_conflict(space_id, page_id)  # clear the /health awareness entry on resolve
+    except Exception:
+        pass
     return {
         "page_id": str(page_id),
         "resolved": bool(res.get("resolved")),
@@ -574,6 +603,10 @@ def confirm_deletion(
         _remove_local_page(lp)
         result["local_removed"] = True
     write_tree_snapshot(root, _current_tree_entries(root))
+    try:
+        resolve_auto_conflict(space_id, page_id)  # clear the /health awareness entry on deletion
+    except Exception:
+        pass
     return result
 
 

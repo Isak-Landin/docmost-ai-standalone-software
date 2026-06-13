@@ -16,8 +16,9 @@ from mcp.server.fastmcp import FastMCP
 
 from helper import client, sync
 from helper import replica_autosync
+from helper import auto_sync
 
-_EXPECTED_CONTRACT = "1"
+_EXPECTED_CONTRACT = "2"
 try:
     _contract = client.get_contract()
     if str(_contract.get("contract_version")) != _EXPECTED_CONTRACT:
@@ -319,5 +320,29 @@ def clear_stash(space_id: str, page_id: str, snapshot_id: str, local_path: Optio
     sync.consume_stash(UUID(space_id), UUID(page_id), snapshot_id, local_path=local_path)
 
 
+# ---------------------------------------------------------------------------
+# Health surface — awareness of conflicts the background auto-sync parked
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def health(space_id: Optional[str] = None) -> dict:
+    """List the conflicts/deletions the background auto-sync detected and PARKED (it never resolves
+    on its own). Pass space_id to scope to one space, or omit for all spaces. To act on one: inspect
+    the full diff with sync_page(space_id, page_id), resolve it with resolve_conflict (which clears
+    the entry automatically), or call health_resolve to dismiss it. The server never auto-clears —
+    clearing is always a model action."""
+    if space_id:
+        return client.list_auto_conflicts_for_space(UUID(space_id))
+    return client.list_auto_conflicts()
+
+
+@mcp.tool()
+def health_resolve(space_id: str, page_id: str) -> dict:
+    """Dismiss a specific auto-sync-detected conflict from the health list once you have handled it.
+    Conflicts are model-controlled only; the server never auto-clears."""
+    return client.resolve_auto_conflict(UUID(space_id), UUID(page_id))
+
+
 if __name__ == "__main__":
+    auto_sync.start_auto_sync()  # opt-in via DOCMOST_AUTO_SYNC; no-op otherwise
     mcp.run()

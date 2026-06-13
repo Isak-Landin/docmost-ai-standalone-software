@@ -4,6 +4,7 @@ import os
 from fastapi import FastAPI
 
 from app.auto_mcp import routers as auto_mcp
+from app.auto_conflict import routers as auto_conflict
 from app.contract import router as contract_router
 from app.helper_api import routers as helper_api
 from app.mcp_server import mcp
@@ -41,6 +42,8 @@ app.include_router(helper_api.router, prefix="/helper/v1")
 # Reconcile brain + resolution endpoints: same /v1 (+ /helper/v1) surface.
 app.include_router(reconcile.router, prefix="/v1")
 app.include_router(reconcile.router, prefix="/helper/v1")
+# Auto-sync conflict awareness store (standalone; not part of the reconcile pipeline).
+app.include_router(auto_conflict.router, prefix="/v1")
 # Query (read) routes — backed by direct PostgreSQL access
 app.include_router(spaces.router)
 app.include_router(pages.router)

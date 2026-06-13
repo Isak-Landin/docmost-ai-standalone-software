@@ -115,6 +115,7 @@ def get_page(space_id: UUID, page_id: UUID):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     current_revision_hash: str | None = None
+    current_version_id: UUID | None = None
     try:
         ensure_space_bootstrapped(space_id)
         with get_conn() as conn:
@@ -122,10 +123,11 @@ def get_page(space_id: UUID, page_id: UUID):
                 head = get_page_head(cur, page_id)
                 if head:
                     current_revision_hash = head.current_revision_hash
+                    current_version_id = head.current_version_id
     except Exception:
         pass  # bridge head absence is not an error — page may not be tracked yet
 
-    return _map_page(page, current_revision_hash=current_revision_hash)
+    return _map_page(page, current_revision_hash=current_revision_hash, current_version_id=current_version_id)
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +332,7 @@ def _map_space(space: SpaceOut) -> HelperSpaceOut:
     )
 
 
-def _map_page(page: PageOut, *, current_revision_hash: str | None = None) -> HelperPageOut:
+def _map_page(page: PageOut, *, current_revision_hash: str | None = None, current_version_id: UUID | None = None) -> HelperPageOut:
     return HelperPageOut(
         page_id=page.id,
         space_id=page.space_id,
@@ -341,6 +343,7 @@ def _map_page(page: PageOut, *, current_revision_hash: str | None = None) -> Hel
         position=page.position,
         icon=page.icon,
         current_revision_hash=current_revision_hash,
+        current_version_id=current_version_id,
     )
 
 
@@ -367,6 +370,7 @@ def _map_write_result(result) -> HelperPageWriteOut:
         parent_page_id=result.parent_page_id,
         slug_id=result.slug_id,
         base_revision_hash=result.base_revision_hash,
+        base_version_id=result.base_version_id,
     )
 
 

@@ -64,6 +64,7 @@ def resolve_conflict_route(space_id: UUID, page_id: UUID, body: ResolveConflictI
         page_id=page_id,
         resolved=True,
         base_revision_hash=res.base_revision_hash,
+        base_version_id=res.base_version_id,
         title=res.title,
         content=res.content,
     )

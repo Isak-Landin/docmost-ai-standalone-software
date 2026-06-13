@@ -192,6 +192,26 @@ def confirm_deletion_remote(space_id: UUID, page_id: UUID, direction: str) -> di
 
 
 # ---------------------------------------------------------------------------
+# Auto-sync conflict awareness store (/v1/auto-conflicts)
+# ---------------------------------------------------------------------------
+
+def post_auto_conflicts(space_id: UUID, conflicts: list[dict[str, Any]]) -> dict:
+    return _post(f"/v1/spaces/{space_id}/auto-conflicts", {"conflicts": conflicts})
+
+
+def list_auto_conflicts() -> dict:
+    return _get("/v1/auto-conflicts")
+
+
+def list_auto_conflicts_for_space(space_id: UUID) -> dict:
+    return _get(f"/v1/spaces/{space_id}/auto-conflicts")
+
+
+def resolve_auto_conflict(space_id: UUID, page_id: UUID) -> dict:
+    return _post(f"/v1/spaces/{space_id}/auto-conflicts/{page_id}/resolved", {})
+
+
+# ---------------------------------------------------------------------------
 # Snapshot operations
 # ---------------------------------------------------------------------------
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-CONTRACT_VERSION = "1"
+CONTRACT_VERSION = "2"
 
 router = APIRouter(prefix="/v1", tags=["contract"])
 
@@ -29,6 +29,9 @@ def contract() -> dict:
             "confirm-deletion",
             "auto-mcp-apply",
             "auto-mcp-observe",
+            "auto-conflict",
+            "health",
+            "version-id",
         ],
     }
 

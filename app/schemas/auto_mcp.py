@@ -40,6 +40,11 @@ class AutoPageWriteResultOut(BaseModel):
     applied: bool
     message: str
     base_revision_hash: str | None = None
+    base_version_id: UUID | None = None
+    content: str | None = Field(
+        None,
+        description="Canonical post-write content the helper must settle the local file to (anchor honesty).",
+    )
 
 
 class AutoPageWriteBatchOut(BaseModel):

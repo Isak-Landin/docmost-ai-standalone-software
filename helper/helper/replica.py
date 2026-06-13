@@ -48,6 +48,8 @@ def update_meta_after_sync(
         meta["parent_page_id"] = str(response["parent_page_id"])
     if response.get("base_revision_hash") is not None:
         meta["base_revision_hash"] = response["base_revision_hash"]
+    if response.get("base_version_id") is not None:
+        meta["base_version_id"] = str(response["base_version_id"])
     if space_id:
         meta["space_id"] = space_id
     meta["content_file_path"] = local_path
@@ -101,6 +103,8 @@ def update_meta_after_pull(local_path: str, page: dict[str, Any]) -> None:
     # current_revision_hash from server becomes the new sync base
     if page.get("current_revision_hash") is not None:
         meta["base_revision_hash"] = page["current_revision_hash"]
+    if page.get("current_version_id") is not None:
+        meta["base_version_id"] = str(page["current_version_id"])
     meta["content_file_path"] = local_path
     meta["meta_file_path"] = _meta_path(local_path)
     write_meta(local_path, meta)
@@ -226,6 +230,26 @@ def discover_replica_root(space_id: str, base_dir: str | None = None) -> str | N
         if str(data.get("space_id")) == str(space_id):
             return str(header.parent)
     return None
+
+
+def discover_all_replica_roots(base_dir: str | None = None) -> list[tuple[str, str]]:
+    """Every (space_id, root_path) replica under base_dir, by `_replica.json` marker (the same
+    marker the helper already uses). The auto-sync loop uses this to enumerate spaces to reconcile."""
+    base = Path(base_dir or replica_base_dir())
+    if not base.exists():
+        return []
+    found: list[tuple[str, str]] = []
+    for header in base.rglob("_replica.json"):
+        if set(header.parts) & _DISCOVERY_SKIP_DIRS:
+            continue
+        try:
+            data = json.loads(header.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        space_id = data.get("space_id")
+        if space_id:
+            found.append((str(space_id), str(header.parent)))
+    return found
 
 
 def resolve_local_root(

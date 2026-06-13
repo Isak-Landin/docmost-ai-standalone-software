@@ -22,6 +22,7 @@ class ReconcilePageIn(BaseModel):
     position: Optional[str] = None
     icon: Optional[str] = None
     base_revision_hash: Optional[str] = Field(None, description="Recorded sync base (head revision at last successful sync).")
+    base_version_id: Optional[UUID] = Field(None, description="Recorded sync base version id (opaque local pointer; the server resolves the chain).")
     local_path: Optional[str] = Field(None, description="Helper-side path for result correlation; opaque to the server.")
     parent_local_path: Optional[str] = Field(None, description="local_path of the parent page (dir nesting). Lets the server nest a new child under a sibling created in the same pass.")
 
@@ -54,6 +55,7 @@ class ReconcileSyncedItem(BaseModel):
     page_id: UUID
     local_path: Optional[str] = None
     base_revision_hash: Optional[str] = Field(None, description="Current head hash; the helper refreshes a stale local base to this.")
+    base_version_id: Optional[UUID] = Field(None, description="Current head version id; the helper refreshes the local base pointer to this.")
 
 
 class ReconcileAppliedItem(BaseModel):
@@ -66,6 +68,7 @@ class ReconcileAppliedItem(BaseModel):
     position: Optional[str] = None
     icon: Optional[str] = None
     base_revision_hash: Optional[str] = None
+    base_version_id: Optional[UUID] = None
     content: Optional[str] = Field(None, description="Present only when the helper must write/refresh the local file (created/pulled).")
 
 
@@ -75,6 +78,7 @@ class ReconcileConflictItem(BaseModel):
     title: Optional[str] = None
     reason: str = Field(description="both_changed | delete_vs_change | structural_both_changed")
     base_revision_hash: Optional[str] = None
+    base_version_id: Optional[UUID] = None
     local_version: Optional[str] = Field(None, description="Local content revision hash.")
     remote_version: Optional[str] = Field(None, description="Current remote (bridge head) revision hash.")
     local_content: Optional[str] = None
@@ -121,6 +125,7 @@ class ResolveConflictOut(BaseModel):
     page_id: UUID
     resolved: bool
     base_revision_hash: Optional[str] = None
+    base_version_id: Optional[UUID] = None
     title: Optional[str] = None
     content: Optional[str] = None
 

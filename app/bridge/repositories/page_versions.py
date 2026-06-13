@@ -62,6 +62,19 @@ def upsert_page_version(cur, snapshot: BridgePageSnapshot, *, source: str, write
     return _map_page_version(cur.fetchone())
 
 
+def revision_hashes_by_version_for_space(cur, space_id: UUID) -> dict[tuple[str, str], str]:
+    """(page_id, version_id) -> revision_hash for every recorded version in the space.
+
+    Used by reconcile to resolve a base from the helper-carried base_version_id when the
+    helper-sent base_revision_hash is absent (the version-id heal path). The version store is
+    the server's authoritative chain, so the local never resolves it."""
+    cur.execute(
+        "SELECT page_id, id, revision_hash FROM page_versions WHERE space_id = %s",
+        (str(space_id),),
+    )
+    return {(str(row["page_id"]), str(row["id"])): row["revision_hash"] for row in cur.fetchall()}
+
+
 def _map_page_version(row: dict) -> PageVersionRecord:
     return PageVersionRecord(
         id=UUID(str(row["id"])),
