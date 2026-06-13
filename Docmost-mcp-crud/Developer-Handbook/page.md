@@ -128,15 +128,18 @@ the Docmost-to-local sync stays manual. So replica edits may already be committe
   choices (for example `-` bullets, ATX headings, fenced code, marker-width nested-list indent - two
   spaces under a bullet, three under an ordered item), never in structure. Treat the post-sync form
   as the source of truth.
-- Write-path escaping now neutralizes the former ingest asymmetries automatically. On the way out
-  the bridge escapes the tokens Docmost's `marked` would otherwise mis-read outside code: flanking
+- Write-path normalization now neutralizes the former ingest asymmetries automatically (the ingest
+  half of the Conversion Gate, `app/write/ingest.py`). It re-indents an under-indented sub-list to
+  the parent marker width so nesting is preserved instead of flattened, guards Docmost's leading
+  front-matter strip, and escapes the tokens `marked` would otherwise mis-read outside code: flanking
   `_`/`__` (so `app/__init__.py` stays literal instead of becoming bold `init`) and non-schema HTML
-  tags (so a stray `<article>` or `<div>` survives as literal text instead of being dropped together
-  with its neighbours). These no longer need manual backticking to round-trip.
-- One ingest residual remains, owned by Docmost's own parser and not preventable by the egress: a
-  literal double-dollar or a bare single-dollar pair is grabbed by Docmost's math extension on
-  ingest. Describe math in prose or backtick it. A related input limitation (an ordered list authored
-  at a two-space indent is not auto-renested) is covered on the Known Limitations page.
+  tags (so a stray `<article>` or `<div>` survives as literal text instead of being dropped with its
+  neighbours). None of these need manual fixing to round-trip.
+- Two ingest residuals remain, owned by Docmost's own parser and not preventable by the egress: a
+  literal double-dollar or a bare single-dollar pair is grabbed by Docmost's math extension (describe
+  math in prose or backtick a literal dollar), and an inline-code span whose content ends in a space
+  followed by a word loses that outer space (do not lean a space on a code span's edge). Both are
+  detailed on the Conversion Gate and Known Limitations pages.
 - Use plain ASCII punctuation; no Unicode em-dashes, curly quotes, or ellipsis characters.
 
 ## Restarting (exact procedures)
@@ -189,8 +192,9 @@ Restart the bridge:
 - Troubleshooting: helper cannot find a replica - it scans `DOCMOST_REPLICA_BASE` (default cwd) for a
   matching `_replica.json`; pass an explicit `local_root` only when discovery is ambiguous.
   `Session not found` after a rebuild - reconnect MCP. A page that came back as odd text - a literal
-  `$` or double-dollar pair was taken by Docmost's math extension (backtick it); flanking `_`/`__` and
-  stray HTML tags are now escaped automatically on the write path. See Known Limitations.
+  `$` or double-dollar pair was taken by Docmost's math extension (backtick it). Flanking `_`/`__`,
+  stray HTML tags, under-indented sub-lists, and a leading front-matter rule are now normalized
+  automatically on the write path. See Conversion Gate and Known Limitations.
 
 ## Recommended practices
 
@@ -206,4 +210,4 @@ Restart the bridge:
 ## Deep-dive index
 
 Overview, Architecture, Configuration, MCP Server, REST API, Database Layer, Data Models, Helper,
-Replica System, Deployment, claude-mcp-setup, Known Limitations, Release.
+Replica System, Deployment, claude-mcp-setup, Conversion Gate, Known Limitations, Release.
