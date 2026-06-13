@@ -48,12 +48,12 @@ The rest exist for manual override.
 ## The reconcile workflow
 
 1. Edit `page.md` locally, and/or move page directories to restructure the hierarchy (the helper
-  derives a page's parent from its directory nesting, so moving a directory re-parents the page).
+   derives a page's parent from its directory nesting, so moving a directory re-parents the page).
 2. Call `sync_space(space_id)` (or `sync_page` / `sync_page_tree`) with only the id.
 3. The helper builds the current local page set and the last-synced tree, sends them to the
-  server's reconcile brain, and applies the result locally in one pass: it pushes your edits,
-  creates local-only pages, pulls remote changes, materializes new remote pages, applies
-  moves/re-parents, and realigns each page's sync base.
+   server's reconcile brain, and applies the result locally in one pass: it pushes your edits,
+   creates local-only pages, pulls remote changes, materializes new remote pages, applies
+   moves/re-parents, and realigns each page's sync base.
 4. Act only on what the result flags for a decision (conflicts, deletions).
 
 A clean sync needs no force and surfaces no conflicts.
