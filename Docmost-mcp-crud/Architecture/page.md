@@ -39,10 +39,13 @@ The system is a server bridge plus a client-side helper. The model talks only to
 | --- | --- |
 | `app/main.py` | App factory, router registration, `/mcp` mount, MCP session lifespan |
 | `app/query/docmost.py` | Direct Docmost DB reads; ProseMirror -> markdown render |
-| `app/query/prosemirror.py` | Deterministic ProseMirror-JSON to markdown renderer; faithful inverse of Docmost's `marked` ingest (structure-preserving, position-aware escaping) |
+| `app/query/prosemirror.py` | Deterministic ProseMirror-JSON to markdown renderer; faithful inverse of Docmost's `marked` ingest (structure-preserving, position-aware escaping). Egress half of the Conversion Gate |
 | `app/query/db.py` | Docmost DB connection / DSN, `DocmostConnectionError` |
 | `app/query/replica.py` | Server-side replica structure / standards (operator + `/sync`) |
-| `app/write/docmost.py` | Docmost REST write client |
+| `app/write/docmost.py` | Docmost REST write client; routes all content through the ingest normalizer |
+| `app/write/ingest.py` | Single write-path entrypoint `normalize_markdown_for_ingest`: composes the block reflow then the inline escaper (the ingest half of the Conversion Gate) |
+| `app/write/ingest_reflow.py` | Block-structure countermalform: re-indents under-indented sub-lists to marker width and guards Docmost's leading front-matter strip |
+| `app/write/ingest_escape.py` | Inline countermalform: escapes flanking `_`/`__` and non-schema HTML tags outside code |
 | `app/bridge/services/write_pipeline.py` | All bridge writes: intents / receipts, canonical finalize, rollback |
 | `app/bridge/services/canonical.py` | The single revision-hash derivation point |
 | `app/bridge/services/versioning.py` | `revision_hash`, head-alignment checks, snapshots |
